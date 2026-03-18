@@ -533,16 +533,39 @@
 
 	.mode-btn {
 		font: inherit;
+		font-size: var(--app-text-sm);
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		line-height: 1;
 		border: var(--app-border-thick);
 		border-radius: var(--app-radius-sm);
-		padding: var(--app-space-sm);
+		padding: var(--app-space-sm) var(--app-space-md);
 		background: var(--app-clr-surface-raised);
 		color: var(--app-clr-on-surface-text-secondary);
 		cursor: pointer;
+		box-shadow: var(--app-shadow-btn);
+		transition:
+			box-shadow var(--app-transition-fast),
+			transform var(--app-transition-fast),
+			background-color var(--app-transition-fast),
+			color var(--app-transition-fast);
 	}
 
 	.mode-btn.active {
 		color: white;
+		box-shadow: var(--app-shadow-btn-press);
+	}
+
+	.mode-btn:hover:not(.active) {
+		color: var(--app-clr-on-surface-text);
+		box-shadow: var(--app-shadow-btn-hover);
+		transform: translate(-1px, -1px);
+	}
+
+	.mode-btn:active {
+		box-shadow: var(--app-shadow-btn-press);
+		transform: translate(1px, 1px);
 	}
 
 	.page-shell[data-mode='work'] .mode-btn.active {
@@ -599,10 +622,84 @@
 		color: var(--app-clr-on-surface-text);
 	}
 
+	select {
+		-webkit-appearance: none;
+		appearance: none;
+		padding-right: 2rem;
+		background-image:
+			linear-gradient(45deg, transparent 50%, var(--app-clr-on-surface-text-secondary) 50%),
+			linear-gradient(135deg, var(--app-clr-on-surface-text-secondary) 50%, transparent 50%);
+		background-position:
+			calc(100% - 14px) calc(50% - 2px),
+			calc(100% - 8px) calc(50% - 2px);
+		background-size: 6px 6px, 6px 6px;
+		background-repeat: no-repeat;
+	}
+
 	input[type='range'] {
+		-webkit-appearance: none;
+		appearance: none;
 		padding: 0;
 		height: 0.5rem;
-		accent-color: var(--app-clr-work);
+		border-radius: var(--app-radius-sm);
+		border: var(--app-border-thick);
+		background:
+			linear-gradient(
+				to right,
+				hsl(0 100% 50%),
+				hsl(60 100% 50%),
+				hsl(120 100% 50%),
+				hsl(180 100% 50%),
+				hsl(240 100% 50%),
+				hsl(300 100% 50%),
+				hsl(360 100% 50%)
+			);
+		cursor: pointer;
+		outline: none;
+	}
+
+	input[type='range']::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 1.125rem;
+		height: 1.125rem;
+		border-radius: var(--app-radius-sm);
+		background: #fff;
+		border: var(--app-border-thick);
+		box-shadow: 2px 2px 0 #b0b1c0;
+		transition: border-color var(--app-transition-fast), box-shadow var(--app-transition-fast);
+	}
+
+	input[type='range']::-moz-range-thumb {
+		width: 1.125rem;
+		height: 1.125rem;
+		border-radius: var(--app-radius-sm);
+		background: #fff;
+		border: var(--app-border-thick);
+		box-shadow: 2px 2px 0 #b0b1c0;
+		transition: border-color var(--app-transition-fast), box-shadow var(--app-transition-fast);
+	}
+
+	input[type='range']::-moz-range-track {
+		height: 0.5rem;
+		border-radius: var(--app-radius-sm);
+		border: var(--app-border-thick);
+		background:
+			linear-gradient(
+				to right,
+				hsl(0 100% 50%),
+				hsl(60 100% 50%),
+				hsl(120 100% 50%),
+				hsl(180 100% 50%),
+				hsl(240 100% 50%),
+				hsl(300 100% 50%),
+				hsl(360 100% 50%)
+			);
+	}
+
+	input[type='range']:hover::-webkit-slider-thumb,
+	input[type='range']:hover::-moz-range-thumb {
+		border-color: var(--app-clr-on-surface-text-secondary);
 	}
 
 	.btn {
@@ -665,12 +762,47 @@
 	}
 
 	.chip {
+		font-family: var(--app-font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		line-height: 1;
 		border: var(--app-border-thick);
 		border-radius: var(--app-radius-sm);
 		background: var(--app-clr-surface-raised);
 		color: var(--app-clr-on-surface-text);
-		padding: 0.2rem 0.45rem;
+		padding: 0.25rem 0.5rem;
 		cursor: pointer;
+		box-shadow: var(--app-shadow-btn);
+		transition:
+			box-shadow var(--app-transition-fast),
+			transform var(--app-transition-fast),
+			color var(--app-transition-fast),
+			border-color var(--app-transition-fast);
+	}
+
+	.chip:hover {
+		box-shadow: var(--app-shadow-btn-hover);
+		transform: translate(-1px, -1px);
+	}
+
+	.chip:active {
+		box-shadow: var(--app-shadow-btn-press);
+		transform: translate(1px, 1px);
+	}
+
+	.shortcut-row:first-child .chip:hover {
+		border-color: var(--app-clr-work);
+		color: var(--app-clr-work);
+	}
+
+	.shortcut-row:nth-child(2) .chip:hover {
+		border-color: var(--app-clr-break);
+		color: var(--app-clr-break);
+	}
+
+	.shortcut-row:nth-child(3) .chip:hover {
+		border-color: var(--app-clr-long-break);
+		color: var(--app-clr-long-break);
 	}
 
 	.session-save {
