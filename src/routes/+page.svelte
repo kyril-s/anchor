@@ -232,12 +232,15 @@
 		breakMinutes = clamp(Math.floor(breakMinutes || 5), 1, 60);
 		longBreakMinutes = clamp(Math.floor(longBreakMinutes || 25), 1, 120);
 		longBreakInterval = clamp(Math.floor(longBreakInterval || 4), 1, 20);
-		currentHue = clamp(Math.floor(currentHue || DEFAULT_THEME_HUE), 0, 360);
 
 		// Keep paused timers at their current remaining time.
 		if (timerStatus === 'idle') {
 			timeRemaining = secondsForMode(currentMode);
 		}
+	}
+
+	function applyPreferenceSettings() {
+		currentHue = clamp(Math.floor(currentHue || DEFAULT_THEME_HUE), 0, 360);
 	}
 
 	async function persistUiSettings() {
@@ -256,10 +259,21 @@
 
 	function queueUiSettingsSave() {
 		applyPomodoroSettings();
+		applyPreferenceSettings();
 		clearUiSettingsSaveHandle();
 		uiSettingsSaveHandle = setTimeout(() => {
 			void persistUiSettings();
 		}, UI_SETTINGS_SAVE_DEBOUNCE_MS);
+	}
+
+	function queuePomodoroSettingsSave() {
+		applyPomodoroSettings();
+		queueUiSettingsSave();
+	}
+
+	function queuePreferenceSettingsSave() {
+		applyPreferenceSettings();
+		queueUiSettingsSave();
 	}
 
 	function applyShortcut(mode: Mode, minutes: number) {
@@ -381,12 +395,36 @@
 		input?.blur();
 	}
 
+	function truncateLabel(value: string, maxLength: number) {
+		if (value.length <= maxLength) return value;
+		return `${value.slice(0, maxLength - 1)}…`;
+	}
+
+	function formatDisplayDate(value: string) {
+		const parsed = new Date(value);
+		if (Number.isNaN(parsed.getTime())) return value;
+		return parsed.toLocaleDateString('en-US', {
+			month: 'short',
+			day: 'numeric',
+			year: 'numeric'
+		});
+	}
+
+	const navTitle = $derived(
+		truncateLabel(data.user?.name ?? data.user?.email ?? 'Anchor', 12)
+	);
+	const navDate = $derived(formatDisplayDate(data.today));
+
 	$effect(() => {
 		applyTheme();
 	});
 
 	$effect(() => {
 		applyPomodoroSettings();
+	});
+
+	$effect(() => {
+		applyPreferenceSettings();
 	});
 
 	$effect(() => {
@@ -416,91 +454,94 @@
 </script>
 
 <main class="page-shell" data-mode={currentMode} data-running={timerStatus === 'running'}>
-	<header class="top-nav card">
-		<div class="nav-brand">
-			<h1>Anchor</h1>
-			<p class="nav-date">{data.today}</p>
-		</div>
+	<header class="top-nav-wrap">
+		<div class="top-nav">
+			<div class="nav-brand">
+				<h1>{navTitle}</h1>
+				<p class="nav-date">{navDate}</p>
+			</div>
 
-		<div class="nav-tabs" role="tablist" aria-label="Main sections">
-			<button
-				class="tab-btn"
-				class:active={activeTab === 'my-day'}
-				role="tab"
-				aria-selected={activeTab === 'my-day'}
-				aria-controls="panel-my-day"
-				type="button"
-				onclick={() => (activeTab = 'my-day')}
-			>
-				My day
-			</button>
-			<button
-				class="tab-btn"
-				class:active={activeTab === 'timers'}
-				role="tab"
-				aria-selected={activeTab === 'timers'}
-				aria-controls="panel-timers"
-				type="button"
-				onclick={() => (activeTab = 'timers')}
-			>
-				Timers
-			</button>
-		</div>
+			<div class="nav-tabs" role="tablist" aria-label="Main sections">
+				<button
+					class="tab-btn"
+					class:active={activeTab === 'my-day'}
+					role="tab"
+					aria-selected={activeTab === 'my-day'}
+					aria-controls="panel-my-day"
+					type="button"
+					onclick={() => (activeTab = 'my-day')}
+				>
+					My day
+				</button>
+				<button
+					class="tab-btn"
+					class:active={activeTab === 'timers'}
+					role="tab"
+					aria-selected={activeTab === 'timers'}
+					aria-controls="panel-timers"
+					type="button"
+					onclick={() => (activeTab = 'timers')}
+				>
+					Timers
+				</button>
+			</div>
 
-		<div class="nav-actions">
-			<span class="user-chip">{data.user?.name ?? data.user?.email ?? 'Signed in'}</span>
-			<button
-				class="icon-btn"
-				class:active={data.dayStarted}
-				type="button"
-				aria-label={data.dayStarted ? 'Finish day' : 'Start day'}
-				title={data.dayStarted ? 'Finish day' : 'Start day'}
-				onclick={openStartDayPrompt}
-			>
-				{#if data.dayStarted}
-					<svg
-						viewBox="0 0 24 24"
-						width="18"
-						height="18"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<path d="M21 12.79A9 9 0 1 1 11.21 3c-.01.26-.01.52-.01.79A8 8 0 0 0 20 12c.27 0 .53 0 .79-.01z" />
-					</svg>
-				{:else}
-					<svg
-						viewBox="0 0 24 24"
-						width="18"
-						height="18"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<circle cx="12" cy="12" r="4" />
-						<path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" />
-					</svg>
-				{/if}
-			</button>
-			<button class="icon-btn" type="button" aria-label="Open settings" onclick={openSettings}>
-				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-					<path
-						d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-					/>
-					<circle cx="12" cy="12" r="3" />
-				</svg>
-			</button>
-			<form method="post" action="?/signOut" use:enhance>
-				<button class="icon-btn" type="submit" aria-label="Sign out" title="Sign out">
+			<div class="nav-actions">
+				<button
+					class="icon-btn"
+					class:active={data.dayStarted}
+					type="button"
+					aria-label={data.dayStarted ? 'Finish day' : 'Start day'}
+					title={data.dayStarted ? 'Finish day' : 'Start day'}
+					onclick={openStartDayPrompt}
+				>
+					{#if data.dayStarted}
+						<svg
+							viewBox="0 0 24 24"
+							width="18"
+							height="18"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path d="M21 12.79A9 9 0 1 1 11.21 3c-.01.26-.01.52-.01.79A8 8 0 0 0 20 12c.27 0 .53 0 .79-.01z" />
+						</svg>
+					{:else}
+						<svg
+							viewBox="0 0 24 24"
+							width="18"
+							height="18"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<circle cx="12" cy="12" r="4" />
+							<path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" />
+						</svg>
+					{/if}
+				</button>
+				<button class="icon-btn" type="button" aria-label="Open settings" onclick={openSettings}>
 					<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-						<path d="m16 17 5-5-5-5" />
-						<path d="M21 12H9" />
+						<path
+							d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+						/>
+						<circle cx="12" cy="12" r="3" />
 					</svg>
 				</button>
-			</form>
+				<form method="post" action="?/signOut" use:enhance>
+					<button class="icon-btn" type="submit" aria-label="Sign out" title="Sign out">
+						<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+							<path d="m16 17 5-5-5-5" />
+							<path d="M21 12H9" />
+						</svg>
+					</button>
+				</form>
+			</div>
 		</div>
 	</header>
+
+	<section class="page-content">
 
 	<Modal open={startDayPromptOpen} title="Start day" compact onClose={closeStartDayPrompt}>
 		<section class="start-day-prompt" aria-label="Start day prompt">
@@ -704,6 +745,7 @@
 			<p>Empty for now (v2).</p>
 		</div>
 	{/if}
+	</section>
 
 	<Modal open={settingsOpen} title="Settings" onClose={closeSettings}>
 		<div class="modal-settings-layout">
@@ -739,7 +781,7 @@
 							min="1"
 							max="120"
 							bind:value={workMinutes}
-							oninput={queueUiSettingsSave}
+							oninput={queuePomodoroSettingsSave}
 						/>
 					</label>
 					<label>
@@ -750,7 +792,7 @@
 							min="1"
 							max="60"
 							bind:value={breakMinutes}
-							oninput={queueUiSettingsSave}
+							oninput={queuePomodoroSettingsSave}
 						/>
 					</label>
 					<label>
@@ -761,7 +803,7 @@
 							min="1"
 							max="120"
 							bind:value={longBreakMinutes}
-							oninput={queueUiSettingsSave}
+							oninput={queuePomodoroSettingsSave}
 						/>
 					</label>
 					<label>
@@ -772,9 +814,15 @@
 							min="1"
 							max="20"
 							bind:value={longBreakInterval}
-							oninput={queueUiSettingsSave}
+							oninput={queuePomodoroSettingsSave}
 						/>
 					</label>
+				</div>
+			</section>
+
+			<section class="card" data-elevated="false">
+				<h3>Preferences</h3>
+				<div class="settings-grid">
 					<label class="hue-label">
 						Theme hue
 						<input
@@ -783,7 +831,7 @@
 							min="0"
 							max="360"
 							bind:value={currentHue}
-							oninput={queueUiSettingsSave}
+							oninput={queuePreferenceSettingsSave}
 						/>
 					</label>
 				</div>
@@ -857,15 +905,32 @@
 
 <style>
 	.page-shell {
-		max-width: 1200px;
-		margin: 0 auto;
-		padding: var(--app-space-xl) var(--app-space-md);
+		width: 100%;
+		padding: 0 0 var(--app-space-md);
 		display: grid;
 		grid-template-rows: auto minmax(0, 1fr);
 		gap: var(--app-space-md);
 		height: 100dvh;
 		box-sizing: border-box;
 		overflow: hidden;
+	}
+
+	.top-nav-wrap {
+		position: sticky;
+		top: 0;
+		z-index: 30;
+		width: 100vw;
+		margin-left: calc(50% - 50vw);
+		background: var(--app-clr-surface-page);
+		border-bottom: var(--app-border-thick);
+	}
+
+	.page-content {
+		width: min(1200px, 100%);
+		margin: 0 auto;
+		padding: 0 var(--app-space-md);
+		height: 100%;
+		min-height: 0;
 	}
 
 	.card {
@@ -915,6 +980,9 @@
 
 	.top-nav {
 		min-height: var(--app-nav-height);
+		width: min(1200px, 100%);
+		margin: 0 auto;
+		padding: var(--app-space-md);
 		display: grid;
 		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
@@ -944,19 +1012,6 @@
 		justify-content: flex-end;
 		align-items: center;
 		gap: var(--app-space-xs);
-	}
-
-	.user-chip {
-		padding: 0.45rem 0.65rem;
-		border: var(--app-border-thin);
-		border-radius: var(--app-radius-sm);
-		background: var(--app-clr-surface-raised);
-		color: var(--app-clr-on-surface-text-secondary);
-		font-size: 0.8rem;
-		max-width: 12rem;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	.tab-btn,
@@ -1025,6 +1080,7 @@
 			'pomodoro dump';
 		gap: var(--app-space-md);
 		align-items: stretch;
+		height: 100%;
 		min-height: 0;
 	}
 
@@ -1046,6 +1102,7 @@
 	}
 
 	.timers-panel {
+		height: 100%;
 		min-height: 0;
 		align-content: start;
 	}
