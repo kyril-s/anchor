@@ -448,6 +448,7 @@
 		</div>
 
 		<div class="nav-actions">
+			<span class="user-chip">{data.user?.name ?? data.user?.email ?? 'Signed in'}</span>
 			<button
 				class="icon-btn"
 				class:active={data.dayStarted}
@@ -489,6 +490,15 @@
 					<circle cx="12" cy="12" r="3" />
 				</svg>
 			</button>
+			<form method="post" action="?/signOut" use:enhance>
+				<button class="icon-btn" type="submit" aria-label="Sign out" title="Sign out">
+					<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+						<path d="m16 17 5-5-5-5" />
+						<path d="M21 12H9" />
+					</svg>
+				</button>
+			</form>
 		</div>
 	</header>
 
@@ -932,7 +942,21 @@
 	.nav-actions {
 		display: flex;
 		justify-content: flex-end;
+		align-items: center;
 		gap: var(--app-space-xs);
+	}
+
+	.user-chip {
+		padding: 0.45rem 0.65rem;
+		border: var(--app-border-thin);
+		border-radius: var(--app-radius-sm);
+		background: var(--app-clr-surface-raised);
+		color: var(--app-clr-on-surface-text-secondary);
+		font-size: 0.8rem;
+		max-width: 12rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.tab-btn,

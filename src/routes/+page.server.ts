@@ -1,8 +1,11 @@
-import { fail } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
+import type { RequestEvent } from '@sveltejs/kit';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
+import { auth } from '$lib/server/auth';
 import { appConfig, dailyNote, dailyTask, daySession, pomodoroSession } from '$lib/server/db/schema';
+import { claimLegacyDataForUser } from '$lib/server/legacy-data';
 import {
 	normalizeNoteFieldMap,
 	normalizeTaskFieldMap,
@@ -11,7 +14,6 @@ import {
 } from '$lib/server/notion';
 import type { Actions, PageServerLoad } from './$types';
 
-const APP_CONFIG_ID = 1;
 const DEFAULT_THEME_HUE = 330.216;
 const DEFAULT_UI_SETTINGS = {
 	themeHue: DEFAULT_THEME_HUE,
@@ -75,29 +77,40 @@ function normalizeUiSettings(raw: unknown) {
 	};
 }
 
-async function getOrCreateConfig() {
-	const existing = await db.query.appConfig.findFirst({ where: eq(appConfig.id, APP_CONFIG_ID) });
+async function requireUserId(event: RequestEvent) {
+	const userId = event.locals.user?.id;
+	if (!userId) {
+		throw redirect(302, '/login');
+	}
+
+	await claimLegacyDataForUser(userId);
+	return userId;
+}
+
+async function getOrCreateConfig(userId: string) {
+	const existing = await db.query.appConfig.findFirst({ where: eq(appConfig.userId, userId) });
 	if (existing) return existing;
 
-	await db.insert(appConfig).values({ id: APP_CONFIG_ID });
-	const created = await db.query.appConfig.findFirst({ where: eq(appConfig.id, APP_CONFIG_ID) });
+	await db.insert(appConfig).values({ userId });
+	const created = await db.query.appConfig.findFirst({ where: eq(appConfig.userId, userId) });
 	if (!created) throw new Error('Failed to initialize app configuration');
 	return created;
 }
 
-async function moveUnfinishedTasks(fromDay: string, toDay: string) {
+async function moveUnfinishedTasks(userId: string, fromDay: string, toDay: string) {
 	const unfinished = await db.query.dailyTask.findMany({
-		where: and(eq(dailyTask.day, fromDay), eq(dailyTask.done, false))
+		where: and(eq(dailyTask.userId, userId), eq(dailyTask.day, fromDay), eq(dailyTask.done, false))
 	});
 
 	let movedCount = 0;
 	for (const task of unfinished) {
 		const existingForTargetDay = await db.query.dailyTask.findFirst({
-			where: and(eq(dailyTask.day, toDay), eq(dailyTask.title, task.title))
+			where: and(eq(dailyTask.userId, userId), eq(dailyTask.day, toDay), eq(dailyTask.title, task.title))
 		});
 		if (existingForTargetDay) continue;
 
 		await db.insert(dailyTask).values({
+			userId,
 			day: toDay,
 			title: task.title,
 			done: false,
@@ -109,18 +122,22 @@ async function moveUnfinishedTasks(fromDay: string, toDay: string) {
 	return movedCount;
 }
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async (event) => {
+	const userId = await requireUserId(event);
 	const today = getTodayDateString();
 	const [tasks, note, sessions, config, todayDaySession] = await Promise.all([
-		db.query.dailyTask.findMany({ where: eq(dailyTask.day, today), orderBy: [asc(dailyTask.id)] }),
-		db.query.dailyNote.findFirst({ where: eq(dailyNote.day, today) }),
+		db.query.dailyTask.findMany({
+			where: and(eq(dailyTask.userId, userId), eq(dailyTask.day, today)),
+			orderBy: [asc(dailyTask.id)]
+		}),
+		db.query.dailyNote.findFirst({ where: and(eq(dailyNote.userId, userId), eq(dailyNote.day, today)) }),
 		db.query.pomodoroSession.findMany({
-			where: eq(pomodoroSession.day, today),
+			where: and(eq(pomodoroSession.userId, userId), eq(pomodoroSession.day, today)),
 			orderBy: [desc(pomodoroSession.startedAt)],
 			limit: 20
 		}),
-		getOrCreateConfig(),
-		db.query.daySession.findFirst({ where: eq(daySession.day, today) })
+		getOrCreateConfig(userId),
+		db.query.daySession.findFirst({ where: and(eq(daySession.userId, userId), eq(daySession.day, today)) })
 	]);
 
 	const normalizedTaskMap = normalizeTaskFieldMap(config.taskFieldMapJson);
@@ -128,6 +145,7 @@ export const load: PageServerLoad = async () => {
 
 	return {
 		today,
+		user: event.locals.user,
 		dayStarted: Boolean(todayDaySession),
 		dayStartedAt: todayDaySession?.startedAt ?? null,
 		tasks,
@@ -145,85 +163,105 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
-	addTask: async ({ request }) => {
-		const formData = await request.formData();
+	addTask: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const title = getString(formData, 'title');
 		const day = getString(formData, 'day') || getTodayDateString();
 
 		if (!title) return fail(400, { message: 'Task title is required.' });
 
-		await db.insert(dailyTask).values({ title, day });
+		await db.insert(dailyTask).values({ userId, title, day });
 		return { message: 'Task added.' };
 	},
 
-	updateTask: async ({ request }) => {
-		const formData = await request.formData();
+	updateTask: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const id = getNumber(formData, 'id');
 		const title = getString(formData, 'title');
 
 		if (!Number.isInteger(id)) return fail(400, { message: 'Invalid task id.' });
 		if (!title) return fail(400, { message: 'Task title is required.' });
 
-		await db.update(dailyTask).set({ title }).where(eq(dailyTask.id, id));
+		await db
+			.update(dailyTask)
+			.set({ title })
+			.where(and(eq(dailyTask.id, id), eq(dailyTask.userId, userId)));
 		return { message: 'Task updated.' };
 	},
 
-	toggleTask: async ({ request }) => {
-		const formData = await request.formData();
+	toggleTask: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const id = getNumber(formData, 'id');
 		const done = getBoolean(formData, 'done');
 
 		if (!Number.isInteger(id)) return fail(400, { message: 'Invalid task id.' });
 
-		await db.update(dailyTask).set({ done }).where(eq(dailyTask.id, id));
+		await db
+			.update(dailyTask)
+			.set({ done })
+			.where(and(eq(dailyTask.id, id), eq(dailyTask.userId, userId)));
 		return { message: 'Task updated.' };
 	},
 
-	deleteTask: async ({ request }) => {
-		const formData = await request.formData();
+	deleteTask: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const id = getNumber(formData, 'id');
 
 		if (!Number.isInteger(id)) return fail(400, { message: 'Invalid task id.' });
 
-		await db.delete(dailyTask).where(eq(dailyTask.id, id));
+		await db.delete(dailyTask).where(and(eq(dailyTask.id, id), eq(dailyTask.userId, userId)));
 		return { message: 'Task removed.' };
 	},
 
-	carryUnfinished: async ({ request }) => {
-		const formData = await request.formData();
+	carryUnfinished: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const fromDay = getString(formData, 'fromDay') || getTodayDateString();
 		const toDay = getString(formData, 'toDay') || getTomorrowDateString(fromDay);
-		const movedCount = await moveUnfinishedTasks(fromDay, toDay);
+		const movedCount = await moveUnfinishedTasks(userId, fromDay, toDay);
 
 		return { message: movedCount ? `Moved ${movedCount} task(s) to ${toDay}.` : 'No tasks were moved.' };
 	},
 
-	startDay: async ({ request }) => {
-		const formData = await request.formData();
+	startDay: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const day = getString(formData, 'day') || getTodayDateString();
 		const moveUnfinished = getBoolean(formData, 'moveUnfinished');
 
-		const existingDaySession = await db.query.daySession.findFirst({ where: eq(daySession.day, day) });
+		const existingDaySession = await db.query.daySession.findFirst({
+			where: and(eq(daySession.userId, userId), eq(daySession.day, day))
+		});
 		if (existingDaySession) {
 			return { message: 'Day already started.' };
 		}
 
-		await db.insert(daySession).values({ day, startedAt: new Date() });
-		await getOrCreateConfig();
+		await db.insert(daySession).values({ userId, day, startedAt: new Date() });
+		await getOrCreateConfig(userId);
 
 		await db
 			.insert(dailyNote)
-			.values({ day, content: '' })
-			.onConflictDoUpdate({ target: dailyNote.day, set: { content: '' } });
+			.values({ userId, day, content: '' })
+			.onConflictDoUpdate({
+				target: [dailyNote.userId, dailyNote.day],
+				set: { content: '' }
+			});
 
-		await db.update(appConfig).set({ uiSettingsJson: DEFAULT_UI_SETTINGS }).where(eq(appConfig.id, APP_CONFIG_ID));
+		await db
+			.update(appConfig)
+			.set({ uiSettingsJson: DEFAULT_UI_SETTINGS })
+			.where(eq(appConfig.userId, userId));
 
 		if (!moveUnfinished) {
 			return { message: 'Day started. Dump cleared and Pomodoro settings reset to defaults.' };
 		}
 
 		const previousDay = getYesterdayDateString(day);
-		const movedCount = await moveUnfinishedTasks(previousDay, day);
+		const movedCount = await moveUnfinishedTasks(userId, previousDay, day);
 		return {
 			message: movedCount
 				? `Day started. Reset complete and moved ${movedCount} task(s) from ${previousDay}.`
@@ -231,37 +269,45 @@ export const actions: Actions = {
 		};
 	},
 
-	finishDay: async ({ request }) => {
-		const formData = await request.formData();
+	finishDay: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const day = getString(formData, 'day') || getTodayDateString();
-		const existingDaySession = await db.query.daySession.findFirst({ where: eq(daySession.day, day) });
+		const existingDaySession = await db.query.daySession.findFirst({
+			where: and(eq(daySession.userId, userId), eq(daySession.day, day))
+		});
 
 		if (!existingDaySession) {
 			return { message: 'Day is not started yet.' };
 		}
 
-		await db.delete(daySession).where(eq(daySession.day, day));
+		await db.delete(daySession).where(and(eq(daySession.userId, userId), eq(daySession.day, day)));
 		return { message: 'Day finished.' };
 	},
 
-	saveNote: async ({ request }) => {
-		const formData = await request.formData();
+	saveNote: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const day = getString(formData, 'day') || getTodayDateString();
 		const content = getString(formData, 'content');
 
 		await db
 			.insert(dailyNote)
-			.values({ day, content })
-			.onConflictDoUpdate({ target: dailyNote.day, set: { content } });
+			.values({ userId, day, content })
+			.onConflictDoUpdate({
+				target: [dailyNote.userId, dailyNote.day],
+				set: { content }
+			});
 
 		return { message: 'Note saved.' };
 	},
 
-	saveSession: async ({ request }) => {
-		const formData = await request.formData();
+	saveSession: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const day = getString(formData, 'day') || getTodayDateString();
 		const taskIdRaw = getString(formData, 'taskId');
-		const taskId = taskIdRaw ? Number(taskIdRaw) : null;
+		const parsedTaskId = taskIdRaw ? Number(taskIdRaw) : null;
 		const durationMinutes = getNumber(formData, 'durationMinutes');
 		const startedAtRaw = getString(formData, 'startedAt');
 		const endedAtRaw = getString(formData, 'endedAt');
@@ -277,9 +323,22 @@ export const actions: Actions = {
 			return fail(400, { message: 'Invalid session time values.' });
 		}
 
+		let taskId: number | null = null;
+		if (parsedTaskId !== null && Number.isInteger(parsedTaskId)) {
+			const task = await db.query.dailyTask.findFirst({
+				where: and(eq(dailyTask.id, parsedTaskId), eq(dailyTask.userId, userId))
+			});
+
+			if (!task) {
+				return fail(400, { message: 'Invalid task selected for session.' });
+			}
+			taskId = task.id;
+		}
+
 		await db.insert(pomodoroSession).values({
+			userId,
 			day,
-			taskId: Number.isInteger(taskId) ? taskId : null,
+			taskId,
 			durationMinutes,
 			startedAt,
 			endedAt,
@@ -289,8 +348,9 @@ export const actions: Actions = {
 		return { message: 'Pomodoro session saved.' };
 	},
 
-	saveUiSettings: async ({ request }) => {
-		const formData = await request.formData();
+	saveUiSettings: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
 		const settings = normalizeUiSettings({
 			themeHue: getNumber(formData, 'themeHue'),
 			workMinutes: getNumber(formData, 'workMinutes'),
@@ -304,14 +364,15 @@ export const actions: Actions = {
 			.set({
 				uiSettingsJson: settings
 			})
-			.where(eq(appConfig.id, APP_CONFIG_ID));
+			.where(eq(appConfig.userId, userId));
 
 		return { message: 'Pomodoro settings saved.' };
 	},
 
-	saveNotionConfig: async ({ request }) => {
-		const formData = await request.formData();
-		const existing = await getOrCreateConfig();
+	saveNotionConfig: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
+		const existing = await getOrCreateConfig(userId);
 
 		const notionApiKeyInput = getString(formData, 'notionApiKey');
 		const tasksDbId = getString(formData, 'tasksDbId');
@@ -339,14 +400,15 @@ export const actions: Actions = {
 				taskFieldMapJson: taskFieldMap,
 				noteFieldMapJson: noteFieldMap
 			})
-			.where(eq(appConfig.id, APP_CONFIG_ID));
+			.where(eq(appConfig.userId, userId));
 
 		return { message: 'Notion settings saved.' };
 	},
 
-	syncNotion: async () => {
+	syncNotion: async (event) => {
+		const userId = await requireUserId(event);
 		const today = getTodayDateString();
-		const config = await getOrCreateConfig();
+		const config = await getOrCreateConfig(userId);
 		const apiKey = config.notionApiKey || env.NOTION_API_KEY;
 		const tasksDbId = config.tasksDbId || env.NOTION_TASKS_DB_ID;
 		const notesDbId = config.notesDbId || env.NOTION_NOTES_DB_ID;
@@ -361,8 +423,12 @@ export const actions: Actions = {
 		const taskMap = normalizeTaskFieldMap(config.taskFieldMapJson);
 		const noteMap = normalizeNoteFieldMap(config.noteFieldMapJson);
 
-		const tasks = await db.query.dailyTask.findMany({ where: eq(dailyTask.day, today) });
-		const note = await db.query.dailyNote.findFirst({ where: eq(dailyNote.day, today) });
+		const tasks = await db.query.dailyTask.findMany({
+			where: and(eq(dailyTask.userId, userId), eq(dailyTask.day, today))
+		});
+		const note = await db.query.dailyNote.findFirst({
+			where: and(eq(dailyNote.userId, userId), eq(dailyNote.day, today))
+		});
 
 		try {
 			for (const task of tasks) {
@@ -372,7 +438,10 @@ export const actions: Actions = {
 					fieldMap: taskMap,
 					task
 				});
-				await db.update(dailyTask).set({ notionPageId }).where(eq(dailyTask.id, task.id));
+				await db
+					.update(dailyTask)
+					.set({ notionPageId })
+					.where(and(eq(dailyTask.id, task.id), eq(dailyTask.userId, userId)));
 			}
 
 			if (note) {
@@ -382,7 +451,10 @@ export const actions: Actions = {
 					fieldMap: noteMap,
 					note
 				});
-				await db.update(dailyNote).set({ notionPageId }).where(eq(dailyNote.id, note.id));
+				await db
+					.update(dailyNote)
+					.set({ notionPageId })
+					.where(and(eq(dailyNote.id, note.id), eq(dailyNote.userId, userId)));
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Unknown Notion sync error';
@@ -390,5 +462,12 @@ export const actions: Actions = {
 		}
 
 		return { message: 'Notion sync completed.' };
+	},
+
+	signOut: async (event) => {
+		await auth.api.signOut({
+			headers: event.request.headers
+		});
+		return redirect(302, '/login');
 	}
 };

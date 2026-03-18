@@ -43,7 +43,25 @@ You can preview the production build with `npm run preview`.
 
 ## Anchor MVP setup
 
-### 1) Database
+### 1) Environment
+
+Create a `.env` file with:
+
+```sh
+DATABASE_URL=...
+ORIGIN=http://localhost:5173
+BETTER_AUTH_SECRET=...
+```
+
+You can also define optional Notion defaults:
+
+```sh
+NOTION_API_KEY=...
+NOTION_TASKS_DB_ID=...
+NOTION_NOTES_DB_ID=...
+```
+
+### 2) Database
 
 Run migrations:
 
@@ -51,13 +69,17 @@ Run migrations:
 pnpm db:migrate
 ```
 
-### 2) Start app
+### 3) Start app
 
 ```sh
 pnpm dev
 ```
 
-### 3) Configure Notion in-app
+### 4) Sign in
+
+Open `/login`, create an account (or sign in), then use the app at `/`.
+
+### 5) Configure Notion in-app
 
 On the root `Anchor` page, open **Notion Settings** and provide:
 
@@ -67,7 +89,3 @@ On the root `Anchor` page, open **Notion Settings** and provide:
 - field mapping names (Anchor fields -> Notion property names)
 
 Then click **Save Notion settings** and **Sync now**.
-
-### Optional env fallback
-
-You can define `NOTION_API_KEY`, `NOTION_TASKS_DB_ID`, and `NOTION_NOTES_DB_ID` in `.env` as local defaults. The app still supports user-provided settings from the UI.
