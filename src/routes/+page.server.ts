@@ -12,8 +12,9 @@ import {
 import type { Actions, PageServerLoad } from './$types';
 
 const APP_CONFIG_ID = 1;
+const DEFAULT_THEME_HUE = 330.216;
 const DEFAULT_UI_SETTINGS = {
-	themeHue: 330,
+	themeHue: DEFAULT_THEME_HUE,
 	workMinutes: 25,
 	breakMinutes: 5,
 	longBreakMinutes: 25,
