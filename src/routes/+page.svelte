@@ -9,6 +9,10 @@
 	type MainTab = 'my-day' | 'timers';
 	type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
 	const DEFAULT_THEME_HUE = 330.216;
+	const DEFAULT_WORK_MINUTES = 25;
+	const DEFAULT_BREAK_MINUTES = 5;
+	const DEFAULT_LONG_BREAK_MINUTES = 25;
+	const DEFAULT_LONG_BREAK_INTERVAL = 4;
 	const UI_SETTINGS_SAVE_DEBOUNCE_MS = 400;
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -22,6 +26,8 @@
 	let selectedTaskId = $state(untrack(() => data.tasks[0]?.id?.toString() ?? ''));
 	let activeTab = $state<MainTab>('my-day');
 	let settingsOpen = $state(false);
+	let startDayPromptOpen = $state(false);
+	let finishDayPromptOpen = $state(false);
 
 	const workSeconds = $derived(workMinutes * 60);
 	const breakSeconds = $derived(breakMinutes * 60);
@@ -301,6 +307,38 @@
 		settingsOpen = false;
 	}
 
+	function openStartDayPrompt() {
+		if (data.dayStarted) {
+			finishDayPromptOpen = true;
+			return;
+		}
+		startDayPromptOpen = true;
+	}
+
+	function closeStartDayPrompt() {
+		startDayPromptOpen = false;
+	}
+
+	function closeFinishDayPrompt() {
+		finishDayPromptOpen = false;
+	}
+
+	function applyStartDayDefaults() {
+		stopInterval();
+		clearUiSettingsSaveHandle();
+		currentHue = DEFAULT_THEME_HUE;
+		workMinutes = DEFAULT_WORK_MINUTES;
+		breakMinutes = DEFAULT_BREAK_MINUTES;
+		longBreakMinutes = DEFAULT_LONG_BREAK_MINUTES;
+		longBreakInterval = DEFAULT_LONG_BREAK_INTERVAL;
+		timerStatus = 'idle';
+		currentMode = 'work';
+		timeRemaining = DEFAULT_WORK_MINUTES * 60;
+		clearSessionDraft();
+		completedDurationMinutes = DEFAULT_WORK_MINUTES;
+		completedWorkSessions = 0;
+	}
+
 	function getToastTone(message?: string): 'success' | 'warning' | 'error' {
 		if (!message) return 'success';
 		const normalized = message.toLowerCase();
@@ -356,6 +394,21 @@
 		return () => window.removeEventListener('keydown', onKeydown);
 	});
 
+	$effect(() => {
+		if (!form?.message) return;
+		if (!form.message.startsWith('Day started')) return;
+		closeStartDayPrompt();
+		closeFinishDayPrompt();
+		applyStartDayDefaults();
+	});
+
+	$effect(() => {
+		if (!form?.message) return;
+		if (!form.message.startsWith('Day finished')) return;
+		closeStartDayPrompt();
+		closeFinishDayPrompt();
+	});
+
 	onDestroy(() => {
 		stopInterval();
 		clearUiSettingsSaveHandle();
@@ -395,6 +448,39 @@
 		</div>
 
 		<div class="nav-actions">
+			<button
+				class="icon-btn"
+				class:active={data.dayStarted}
+				type="button"
+				aria-label={data.dayStarted ? 'Finish day' : 'Start day'}
+				title={data.dayStarted ? 'Finish day' : 'Start day'}
+				onclick={openStartDayPrompt}
+			>
+				{#if data.dayStarted}
+					<svg
+						viewBox="0 0 24 24"
+						width="18"
+						height="18"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<path d="M21 12.79A9 9 0 1 1 11.21 3c-.01.26-.01.52-.01.79A8 8 0 0 0 20 12c.27 0 .53 0 .79-.01z" />
+					</svg>
+				{:else}
+					<svg
+						viewBox="0 0 24 24"
+						width="18"
+						height="18"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+					>
+						<circle cx="12" cy="12" r="4" />
+						<path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" />
+					</svg>
+				{/if}
+			</button>
 			<button class="icon-btn" type="button" aria-label="Open settings" onclick={openSettings}>
 				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
 					<path
@@ -405,6 +491,48 @@
 			</button>
 		</div>
 	</header>
+
+	<Modal open={startDayPromptOpen} title="Start day" compact onClose={closeStartDayPrompt}>
+		<section class="start-day-prompt" aria-label="Start day prompt">
+			<h3>Start your day?</h3>
+			<p>
+				This will clear today&apos;s dump note and reset Pomodoro settings to defaults. Move unfinished
+				tasks from yesterday to today?
+			</p>
+			<div class="row start-day-actions">
+				<button class="btn" type="button" onclick={closeStartDayPrompt}>Cancel</button>
+				<form method="post" action="?/startDay" use:enhance>
+					<input type="hidden" name="day" value={data.today} />
+					<input type="hidden" name="moveUnfinished" value="false" />
+					<button class="btn" type="submit">Start Day Only</button>
+				</form>
+				<form
+					class="start-day-actions-cta"
+					method="post"
+					action="?/startDay"
+					use:enhance
+				>
+					<input type="hidden" name="day" value={data.today} />
+					<input type="hidden" name="moveUnfinished" value="true" />
+					<button class="btn btn-primary" type="submit">Start Day + Move</button>
+				</form>
+			</div>
+		</section>
+	</Modal>
+
+	<Modal open={finishDayPromptOpen} title="Finish day" compact onClose={closeFinishDayPrompt}>
+		<section class="start-day-prompt" aria-label="Finish day prompt">
+			<h3>Finish your day?</h3>
+			<p>This will mark your day as finished and switch the day button back to the start state.</p>
+			<div class="row start-day-actions">
+				<button class="btn" type="button" onclick={closeFinishDayPrompt}>Cancel</button>
+				<form class="start-day-actions-cta" method="post" action="?/finishDay" use:enhance>
+					<input type="hidden" name="day" value={data.today} />
+					<button class="btn btn-primary" type="submit">Finish Day</button>
+				</form>
+			</div>
+		</section>
+	</Modal>
 
 	{#if activeTab === 'my-day'}
 		<div class="my-day-grid" id="panel-my-day" role="tabpanel" aria-label="My day">
@@ -804,6 +932,7 @@
 	.nav-actions {
 		display: flex;
 		justify-content: flex-end;
+		gap: var(--app-space-xs);
 	}
 
 	.tab-btn,
@@ -842,6 +971,12 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	.icon-btn.active {
+		background: var(--app-clr-action-primary);
+		color: var(--app-clr-action-primary-text);
+		box-shadow: var(--app-shadow-interactive-press);
 	}
 
 	.tab-btn:hover:not(.active),
@@ -894,6 +1029,23 @@
 	.modal-settings-layout {
 		display: grid;
 		gap: var(--app-space-md);
+	}
+
+	.start-day-prompt {
+		display: grid;
+		gap: var(--app-space-sm);
+	}
+
+	.start-day-prompt p {
+		color: var(--app-clr-on-surface-text-secondary);
+	}
+
+	.start-day-actions {
+		align-items: center;
+	}
+
+	.start-day-actions-cta {
+		margin-left: auto;
 	}
 
 	h1,

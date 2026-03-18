@@ -2,11 +2,12 @@
 	type Props = {
 		open: boolean;
 		title?: string;
+		compact?: boolean;
 		onClose: () => void;
 		children?: import('svelte').Snippet;
 	};
 
-	let { open, title = 'Settings', onClose, children }: Props = $props();
+	let { open, title = 'Settings', compact = false, onClose, children }: Props = $props();
 
 	function onBackdropClick(event: MouseEvent) {
 		// Close only when clicking outside the dialog panel.
@@ -35,6 +36,7 @@
 	>
 		<div
 			class="modal-panel"
+			class:compact={compact}
 			role="dialog"
 			aria-modal="true"
 			aria-label={title}
@@ -77,6 +79,13 @@
 		display: grid;
 		grid-template-rows: auto 1fr;
 		overflow: hidden;
+	}
+
+	.modal-panel.compact {
+		width: min(32rem, calc(100vw - 2rem));
+		height: auto;
+		max-height: min(80vh, calc(100vh - 2rem));
+		grid-template-rows: auto minmax(0, 1fr);
 	}
 
 	.modal-header {

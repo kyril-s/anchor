@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
-import { appConfig, dailyNote, dailyTask, pomodoroSession } from '$lib/server/db/schema';
+import { appConfig, dailyNote, dailyTask, daySession, pomodoroSession } from '$lib/server/db/schema';
 import {
 	normalizeNoteFieldMap,
 	normalizeTaskFieldMap,
@@ -28,6 +28,12 @@ function getTodayDateString() {
 function getTomorrowDateString(dateString: string) {
 	const date = new Date(`${dateString}T00:00:00Z`);
 	date.setUTCDate(date.getUTCDate() + 1);
+	return date.toISOString().slice(0, 10);
+}
+
+function getYesterdayDateString(dateString: string) {
+	const date = new Date(`${dateString}T00:00:00Z`);
+	date.setUTCDate(date.getUTCDate() - 1);
 	return date.toISOString().slice(0, 10);
 }
 
@@ -79,9 +85,33 @@ async function getOrCreateConfig() {
 	return created;
 }
 
+async function moveUnfinishedTasks(fromDay: string, toDay: string) {
+	const unfinished = await db.query.dailyTask.findMany({
+		where: and(eq(dailyTask.day, fromDay), eq(dailyTask.done, false))
+	});
+
+	let movedCount = 0;
+	for (const task of unfinished) {
+		const existingForTargetDay = await db.query.dailyTask.findFirst({
+			where: and(eq(dailyTask.day, toDay), eq(dailyTask.title, task.title))
+		});
+		if (existingForTargetDay) continue;
+
+		await db.insert(dailyTask).values({
+			day: toDay,
+			title: task.title,
+			done: false,
+			carriedOver: true
+		});
+		movedCount += 1;
+	}
+
+	return movedCount;
+}
+
 export const load: PageServerLoad = async () => {
 	const today = getTodayDateString();
-	const [tasks, note, sessions, config] = await Promise.all([
+	const [tasks, note, sessions, config, todayDaySession] = await Promise.all([
 		db.query.dailyTask.findMany({ where: eq(dailyTask.day, today), orderBy: [asc(dailyTask.id)] }),
 		db.query.dailyNote.findFirst({ where: eq(dailyNote.day, today) }),
 		db.query.pomodoroSession.findMany({
@@ -89,7 +119,8 @@ export const load: PageServerLoad = async () => {
 			orderBy: [desc(pomodoroSession.startedAt)],
 			limit: 20
 		}),
-		getOrCreateConfig()
+		getOrCreateConfig(),
+		db.query.daySession.findFirst({ where: eq(daySession.day, today) })
 	]);
 
 	const normalizedTaskMap = normalizeTaskFieldMap(config.taskFieldMapJson);
@@ -97,6 +128,8 @@ export const load: PageServerLoad = async () => {
 
 	return {
 		today,
+		dayStarted: Boolean(todayDaySession),
+		dayStartedAt: todayDaySession?.startedAt ?? null,
 		tasks,
 		note: note?.content ?? '',
 		sessions,
@@ -160,28 +193,55 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const fromDay = getString(formData, 'fromDay') || getTodayDateString();
 		const toDay = getString(formData, 'toDay') || getTomorrowDateString(fromDay);
-
-		const unfinished = await db.query.dailyTask.findMany({
-			where: and(eq(dailyTask.day, fromDay), eq(dailyTask.done, false))
-		});
-
-		let movedCount = 0;
-		for (const task of unfinished) {
-			const existingForTargetDay = await db.query.dailyTask.findFirst({
-				where: and(eq(dailyTask.day, toDay), eq(dailyTask.title, task.title))
-			});
-			if (existingForTargetDay) continue;
-
-			await db.insert(dailyTask).values({
-				day: toDay,
-				title: task.title,
-				done: false,
-				carriedOver: true
-			});
-			movedCount += 1;
-		}
+		const movedCount = await moveUnfinishedTasks(fromDay, toDay);
 
 		return { message: movedCount ? `Moved ${movedCount} task(s) to ${toDay}.` : 'No tasks were moved.' };
+	},
+
+	startDay: async ({ request }) => {
+		const formData = await request.formData();
+		const day = getString(formData, 'day') || getTodayDateString();
+		const moveUnfinished = getBoolean(formData, 'moveUnfinished');
+
+		const existingDaySession = await db.query.daySession.findFirst({ where: eq(daySession.day, day) });
+		if (existingDaySession) {
+			return { message: 'Day already started.' };
+		}
+
+		await db.insert(daySession).values({ day, startedAt: new Date() });
+		await getOrCreateConfig();
+
+		await db
+			.insert(dailyNote)
+			.values({ day, content: '' })
+			.onConflictDoUpdate({ target: dailyNote.day, set: { content: '' } });
+
+		await db.update(appConfig).set({ uiSettingsJson: DEFAULT_UI_SETTINGS }).where(eq(appConfig.id, APP_CONFIG_ID));
+
+		if (!moveUnfinished) {
+			return { message: 'Day started. Dump cleared and Pomodoro settings reset to defaults.' };
+		}
+
+		const previousDay = getYesterdayDateString(day);
+		const movedCount = await moveUnfinishedTasks(previousDay, day);
+		return {
+			message: movedCount
+				? `Day started. Reset complete and moved ${movedCount} task(s) from ${previousDay}.`
+				: 'Day started. Reset complete. No tasks were moved.'
+		};
+	},
+
+	finishDay: async ({ request }) => {
+		const formData = await request.formData();
+		const day = getString(formData, 'day') || getTodayDateString();
+		const existingDaySession = await db.query.daySession.findFirst({ where: eq(daySession.day, day) });
+
+		if (!existingDaySession) {
+			return { message: 'Day is not started yet.' };
+		}
+
+		await db.delete(daySession).where(eq(daySession.day, day));
+		return { message: 'Day finished.' };
 	},
 
 	saveNote: async ({ request }) => {

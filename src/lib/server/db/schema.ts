@@ -37,6 +37,13 @@ export const dailyNote = pgTable('daily_note', {
 		.notNull()
 });
 
+export const daySession = pgTable('day_session', {
+	id: serial('id').primaryKey(),
+	day: text('day').notNull().unique(),
+	startedAt: timestamp('started_at').notNull(),
+	createdAt: timestamp('created_at').defaultNow().notNull()
+});
+
 export const appConfig = pgTable('app_config', {
 	id: integer('id').primaryKey().default(1),
 	notionApiKey: text('notion_api_key'),
