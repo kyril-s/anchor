@@ -9,6 +9,7 @@
 	type MainTab = 'my-day' | 'timers';
 	type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
 	const DEFAULT_THEME_HUE = 330.216;
+	const UI_SETTINGS_SAVE_DEBOUNCE_MS = 400;
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const uiSettings = untrack(() => data.uiSettings);
@@ -31,6 +32,7 @@
 	let timeRemaining = $state(untrack(() => workSeconds));
 	let timerStatus = $state<TimerStatus>('idle');
 	let timerHandle: ReturnType<typeof setInterval> | null = null;
+	let uiSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
 
 	let sessionStartedAt = $state('');
 	let sessionEndedAt = $state('');
@@ -61,6 +63,7 @@
 			root.setProperty('--app-clr-surface-page', hsl(h, 30, 6));
 			root.setProperty('--app-clr-surface-card', hsl(h, 30, 12));
 			root.setProperty('--app-clr-surface-raised', hsl(h, 28, 18));
+			root.setProperty('--app-clr-surface-input', hsl(h, 24, 10));
 			root.setProperty('--app-clr-on-surface-text', hsl(h, 12, 92));
 			root.setProperty('--app-clr-on-surface-text-secondary', hsl(h, 12, 63));
 			root.setProperty('--app-clr-on-surface-text-muted', hsl(h, 10, 43));
@@ -74,6 +77,7 @@
 			root.setProperty('--app-clr-surface-page', hsl(h, 8, 93));
 			root.setProperty('--app-clr-surface-card', hsl(h, 8, 96));
 			root.setProperty('--app-clr-surface-raised', hsl(h, 6, 91));
+			root.setProperty('--app-clr-surface-input', hsl(h, 10, 94));
 			root.setProperty('--app-clr-on-surface-text', hsl(h, 20, 14));
 			root.setProperty('--app-clr-on-surface-text-secondary', hsl(h, 14, 43));
 			root.setProperty('--app-clr-on-surface-text-muted', hsl(h, 10, 63));
@@ -123,6 +127,12 @@
 		if (!timerHandle) return;
 		clearInterval(timerHandle);
 		timerHandle = null;
+	}
+
+	function clearUiSettingsSaveHandle() {
+		if (!uiSettingsSaveHandle) return;
+		clearTimeout(uiSettingsSaveHandle);
+		uiSettingsSaveHandle = null;
 	}
 
 	function clearSessionDraft() {
@@ -224,12 +234,34 @@
 		}
 	}
 
+	async function persistUiSettings() {
+		const formData = new FormData();
+		formData.set('themeHue', String(currentHue));
+		formData.set('workMinutes', String(workMinutes));
+		formData.set('breakMinutes', String(breakMinutes));
+		formData.set('longBreakMinutes', String(longBreakMinutes));
+		formData.set('longBreakInterval', String(longBreakInterval));
+		try {
+			await fetch('?/saveUiSettings', { method: 'POST', body: formData });
+		} catch {
+			// Keep the UI responsive; users can retry by changing any value again.
+		}
+	}
+
+	function queueUiSettingsSave() {
+		applyPomodoroSettings();
+		clearUiSettingsSaveHandle();
+		uiSettingsSaveHandle = setTimeout(() => {
+			void persistUiSettings();
+		}, UI_SETTINGS_SAVE_DEBOUNCE_MS);
+	}
+
 	function applyShortcut(mode: Mode, minutes: number) {
 		if (timerStatus === 'running') return;
 		if (mode === 'work') workMinutes = minutes;
 		if (mode === 'break') breakMinutes = minutes;
 		if (mode === 'longBreak') longBreakMinutes = minutes;
-		applyPomodoroSettings();
+		queueUiSettingsSave();
 	}
 
 	function buildSchedule() {
@@ -286,6 +318,31 @@
 		return 'success';
 	}
 
+	function submitTaskTitleInput(input: HTMLInputElement | null, originalTitle: string) {
+		if (!input) return;
+		const nextTitle = input.value.trim();
+		const normalizedOriginal = originalTitle.trim();
+		if (!nextTitle) {
+			input.value = normalizedOriginal;
+			return;
+		}
+		if (nextTitle === normalizedOriginal) return;
+		input.value = nextTitle;
+		input.form?.requestSubmit();
+	}
+
+	function autosaveTaskTitleOnBlur(event: FocusEvent, originalTitle: string) {
+		submitTaskTitleInput(event.currentTarget as HTMLInputElement | null, originalTitle);
+	}
+
+	function autosaveTaskTitleOnKeydown(event: KeyboardEvent, originalTitle: string) {
+		if (event.key !== 'Enter') return;
+		event.preventDefault();
+		const input = event.currentTarget as HTMLInputElement | null;
+		submitTaskTitleInput(input, originalTitle);
+		input?.blur();
+	}
+
 	$effect(() => {
 		applyTheme();
 	});
@@ -299,7 +356,10 @@
 		return () => window.removeEventListener('keydown', onKeydown);
 	});
 
-	onDestroy(() => stopInterval());
+	onDestroy(() => {
+		stopInterval();
+		clearUiSettingsSaveHandle();
+	});
 </script>
 
 <main class="page-shell" data-mode={currentMode} data-running={timerStatus === 'running'}>
@@ -349,31 +409,33 @@
 	{#if activeTab === 'my-day'}
 		<div class="my-day-grid" id="panel-my-day" role="tabpanel" aria-label="My day">
 			<section class="card pomodoro-card">
-				<h2>Pomodoro</h2>
-				<div class="mode-toggle-wrap">
-					<button
-						type="button"
-						class:active={currentMode === 'work'}
-						class="mode-btn"
-						onclick={() => switchMode('work')}>Work</button
-					>
-					<button
-						type="button"
-						class:active={currentMode === 'break'}
-						class="mode-btn"
-						onclick={() => switchMode('break')}>Break</button
-					>
-					<button
-						type="button"
-						class:active={currentMode === 'longBreak'}
-						class="mode-btn"
-						onclick={() => switchMode('longBreak')}>Long Break</button
-					>
+				<div class="section-heading section-heading-pomodoro">
+					<h2>Pomodoro</h2>
+					<div class="mode-toggle-wrap" role="group" aria-label="Pomodoro modes">
+						<button
+							type="button"
+							class:active={currentMode === 'work'}
+							class="mode-btn"
+							onclick={() => switchMode('work')}>Work</button
+						>
+						<button
+							type="button"
+							class:active={currentMode === 'break'}
+							class="mode-btn"
+							onclick={() => switchMode('break')}>Break</button
+						>
+						<button
+							type="button"
+							class:active={currentMode === 'longBreak'}
+							class="mode-btn"
+							onclick={() => switchMode('longBreak')}>Long Break</button
+						>
+					</div>
 				</div>
 
 				<p class="clock">{formatClock(timeRemaining)}</p>
 
-				<div class="row">
+				<div class="row timer-actions">
 					<button type="button" class="btn btn-primary" onclick={startPause}>
 						{timerStatus === 'running' ? 'Pause' : 'Start'}
 					</button>
@@ -414,42 +476,79 @@
 
 			<section class="card todos-card">
 				<h2>To-dos</h2>
-				<form method="post" action="?/addTask" class="row" use:enhance>
+				<form method="post" action="?/addTask" class="todo-add-row" use:enhance>
 					<input type="hidden" name="day" value={data.today} />
 					<input name="title" type="text" placeholder="Add a task..." required />
-					<button class="btn btn-primary" type="submit">Add</button>
+					<button class="task-icon-btn task-icon-btn-primary" type="submit" aria-label="Add task">
+						<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M12 5v14M5 12h14" />
+						</svg>
+					</button>
 				</form>
 
-				<form method="post" action="?/carryUnfinished" use:enhance>
-					<input type="hidden" name="fromDay" value={data.today} />
-					<button class="btn" type="submit">Move unfinished to tomorrow</button>
-				</form>
-
-				<ul>
+				<ul class="todo-list">
 					{#if data.tasks.length === 0}
 						<li class="list-item">No tasks yet.</li>
 					{/if}
 					{#each data.tasks as task}
-						<li class="list-item">
-							<form method="post" action="?/toggleTask" class="row" use:enhance>
+						<li class="task-row">
+							<form method="post" action="?/updateTask" class="task-title-form" use:enhance>
 								<input type="hidden" name="id" value={task.id} />
-								<input type="hidden" name="done" value={task.done ? 'false' : 'true'} />
-								<button class="btn" type="submit">{task.done ? 'Mark open' : 'Mark done'}</button>
+								<input
+									class:done={task.done}
+									name="title"
+									value={task.title}
+									required
+									onblur={(event) => autosaveTaskTitleOnBlur(event, task.title)}
+									onkeydown={(event) => autosaveTaskTitleOnKeydown(event, task.title)}
+								/>
 							</form>
 
-							<form method="post" action="?/updateTask" class="row" use:enhance>
-								<input type="hidden" name="id" value={task.id} />
-								<input name="title" value={task.title} required />
-								<button class="btn" type="submit">Save</button>
-							</form>
+							<div class="task-row-actions">
+								<form method="post" action="?/toggleTask" use:enhance>
+									<input type="hidden" name="id" value={task.id} />
+									<input type="hidden" name="done" value={task.done ? 'false' : 'true'} />
+									<button
+										class="task-icon-btn task-icon-btn-success"
+										type="submit"
+										aria-label={task.done ? 'Mark task as open' : 'Mark task as done'}
+										title={task.done ? 'Mark open' : 'Mark done'}
+									>
+										<svg
+											viewBox="0 0 24 24"
+											width="16"
+											height="16"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2"
+										>
+											<path d="m5 12 4 4L19 6" />
+										</svg>
+									</button>
+								</form>
 
-							<form method="post" action="?/deleteTask" use:enhance>
-								<input type="hidden" name="id" value={task.id} />
-								<button class="btn" type="submit">Delete</button>
-							</form>
+								<form method="post" action="?/deleteTask" use:enhance>
+									<input type="hidden" name="id" value={task.id} />
+									<button
+										class="task-icon-btn task-icon-btn-critical"
+										type="submit"
+										aria-label="Delete task"
+										title="Delete"
+									>
+										<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+											<path d="m18 6-12 12M6 6l12 12" />
+										</svg>
+									</button>
+								</form>
+							</div>
 						</li>
 					{/each}
 				</ul>
+
+				<form method="post" action="?/carryUnfinished" class="todo-carry-row" use:enhance>
+					<input type="hidden" name="fromDay" value={data.today} />
+					<button class="btn" type="submit">Move unfinished to tomorrow</button>
+				</form>
 			</section>
 
 			<section class="card dump-card">
@@ -493,31 +592,63 @@
 					</div>
 				</div>
 
-				<form method="post" action="?/saveUiSettings" class="settings-grid" use:enhance>
+				<div class="settings-grid">
 					<label>
 						Work (min)
-						<input name="workMinutes" type="number" min="1" max="120" bind:value={workMinutes} />
+						<input
+							name="workMinutes"
+							type="number"
+							min="1"
+							max="120"
+							bind:value={workMinutes}
+							oninput={queueUiSettingsSave}
+						/>
 					</label>
 					<label>
 						Break (min)
-						<input name="breakMinutes" type="number" min="1" max="60" bind:value={breakMinutes} />
+						<input
+							name="breakMinutes"
+							type="number"
+							min="1"
+							max="60"
+							bind:value={breakMinutes}
+							oninput={queueUiSettingsSave}
+						/>
 					</label>
 					<label>
 						Long Break (min)
-						<input name="longBreakMinutes" type="number" min="1" max="120" bind:value={longBreakMinutes} />
+						<input
+							name="longBreakMinutes"
+							type="number"
+							min="1"
+							max="120"
+							bind:value={longBreakMinutes}
+							oninput={queueUiSettingsSave}
+						/>
 					</label>
 					<label>
 						Long break every
-						<input name="longBreakInterval" type="number" min="1" max="20" bind:value={longBreakInterval} />
+						<input
+							name="longBreakInterval"
+							type="number"
+							min="1"
+							max="20"
+							bind:value={longBreakInterval}
+							oninput={queueUiSettingsSave}
+						/>
 					</label>
 					<label class="hue-label">
 						Theme hue
-						<input name="themeHue" type="range" min="0" max="360" bind:value={currentHue} />
+						<input
+							name="themeHue"
+							type="range"
+							min="0"
+							max="360"
+							bind:value={currentHue}
+							oninput={queueUiSettingsSave}
+						/>
 					</label>
-					<button class="btn btn-personal btn-full" type="submit" disabled={timerStatus === 'running'}>
-						Save settings
-					</button>
-				</form>
+				</div>
 			</section>
 
 			<section class="card" data-elevated="false">
@@ -588,11 +719,15 @@
 
 <style>
 	.page-shell {
-		max-width: 960px;
+		max-width: 1200px;
 		margin: 0 auto;
 		padding: var(--app-space-xl) var(--app-space-md);
 		display: grid;
+		grid-template-rows: auto minmax(0, 1fr);
 		gap: var(--app-space-md);
+		height: 100dvh;
+		box-sizing: border-box;
+		overflow: hidden;
 	}
 
 	.card {
@@ -602,8 +737,38 @@
 		background: var(--app-clr-surface-card);
 		box-shadow: var(--app-shadow-medium);
 		display: grid;
-		gap: var(--app-space-sm);
+		gap: var(--app-space-md);
+		align-content: start;
 		transition: background-color 0.4s ease;
+		min-height: 0;
+		overflow: auto;
+	}
+
+	/* Minimal card scrollbars: transparent track, visible handle only. */
+	.card {
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(in oklab, var(--app-clr-on-surface-text-muted) 45%, transparent)
+			transparent;
+	}
+
+	.card::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+
+	.card::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.card::-webkit-scrollbar-thumb {
+		background: color-mix(in oklab, var(--app-clr-on-surface-text-muted) 45%, transparent);
+		border-radius: 999px;
+		border: 2px solid transparent;
+		background-clip: padding-box;
+	}
+
+	.card::-webkit-scrollbar-corner {
+		background: transparent;
 	}
 
 	.card[data-elevated='false'] {
@@ -620,7 +785,7 @@
 
 	.nav-brand {
 		display: grid;
-		gap: 0.1rem;
+		gap: var(--app-space-xs);
 		align-self: stretch;
 	}
 
@@ -658,7 +823,7 @@
 	}
 
 	.tab-btn {
-		padding: 0.45rem 0.75rem;
+		padding: var(--app-space-sm) var(--app-space-md);
 		font-size: var(--app-text-sm);
 		font-weight: 700;
 		letter-spacing: 0.04em;
@@ -672,8 +837,8 @@
 	}
 
 	.icon-btn {
-		width: 2.25rem;
-		height: 2.25rem;
+		width: 2.5rem;
+		height: 2.5rem;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -695,19 +860,26 @@
 	.my-day-grid {
 		display: grid;
 		grid-template-columns: 1.15fr 1fr;
+		grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 		grid-template-areas:
 			'pomodoro todos'
 			'pomodoro dump';
 		gap: var(--app-space-md);
 		align-items: stretch;
+		min-height: 0;
 	}
 
 	.pomodoro-card {
 		grid-area: pomodoro;
+		gap: var(--app-space-sm);
 	}
 
 	.todos-card {
 		grid-area: todos;
+	}
+
+	.todos-card > h2 {
+		margin-bottom: 0;
 	}
 
 	.dump-card {
@@ -715,7 +887,7 @@
 	}
 
 	.timers-panel {
-		min-height: 50vh;
+		min-height: 0;
 		align-content: start;
 	}
 
@@ -724,18 +896,39 @@
 		gap: var(--app-space-md);
 	}
 
-	.modal-settings-layout h3 {
-		margin: 0;
-		font-size: var(--app-text-lg);
-	}
-
 	h1,
-	h2 {
+	h2,
+	h3 {
 		margin: 0;
+		line-height: var(--app-leading-tight);
 	}
 
 	h1 {
-		font-size: var(--app-text-xl);
+		font-size: calc(var(--app-text-xl) * 1.5);
+		letter-spacing: -0.01em;
+	}
+
+	h2 {
+		font-size: calc(var(--app-text-lg) * 1.5);
+	}
+
+	h3 {
+		font-size: calc(var(--app-text-base) * 1.5);
+		color: var(--app-clr-on-surface-text-secondary);
+	}
+
+	.card > h2,
+	.card > h3,
+	.card > .section-heading {
+		margin-bottom: var(--app-space-xs);
+	}
+
+	.section-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--app-space-sm);
+		flex-wrap: wrap;
 	}
 
 	p {
@@ -743,21 +936,22 @@
 	}
 
 	.mode-toggle-wrap {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		display: inline-flex;
+		align-items: center;
+		flex-wrap: wrap;
 		gap: var(--app-space-xs);
 	}
 
 	.mode-btn {
 		font: inherit;
-		font-size: var(--app-text-sm);
+		font-size: 0.75rem;
 		font-weight: 700;
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		line-height: 1;
 		border: var(--app-border-thick);
 		border-radius: var(--app-radius-sm);
-		padding: var(--app-space-sm) var(--app-space-md);
+		padding: var(--app-space-xs) var(--app-space-sm);
 		background: var(--app-clr-surface-raised);
 		color: var(--app-clr-on-surface-text-secondary);
 		cursor: pointer;
@@ -785,6 +979,30 @@
 		transform: translate(1px, 1px);
 	}
 
+	/* Keep only primary buttons and selects aligned. */
+	.btn,
+	select {
+		height: var(--app-control-height-base);
+	}
+
+	/* Pomodoro mode tabs are intentionally smaller than primary controls. */
+	.mode-btn {
+		height: var(--app-control-height-pomodoro-tab);
+	}
+
+	/* Timer shortcut chips are the smallest action controls. */
+	.chip {
+		height: var(--app-control-height-chip);
+	}
+
+	.btn,
+	.mode-btn,
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
 	.page-shell[data-mode='work'] .mode-btn.active {
 		background: var(--app-clr-work);
 	}
@@ -802,6 +1020,8 @@
 		font-size: var(--app-text-timer);
 		font-weight: 700;
 		letter-spacing: -0.02em;
+		text-align: center;
+		justify-self: center;
 	}
 
 	form {
@@ -813,6 +1033,15 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--app-space-sm);
+	}
+
+	.timer-actions {
+		flex-wrap: nowrap;
+	}
+
+	.timer-actions > .btn {
+		flex: 1 1 0;
+		min-width: 0;
 	}
 
 	label {
@@ -834,14 +1063,21 @@
 		width: 100%;
 		border: var(--app-border-thick);
 		border-radius: var(--app-radius-md);
-		padding: 0.45rem 0.55rem;
-		background: var(--app-clr-surface-raised);
+		padding: var(--app-space-sm);
+		background: var(--app-clr-surface-input);
 		color: var(--app-clr-on-surface-text);
+	}
+
+	.dump-card textarea {
+		resize: vertical;
 	}
 
 	select {
 		-webkit-appearance: none;
 		appearance: none;
+		padding-top: 0;
+		padding-bottom: 0;
+		line-height: 1.2;
 		padding-right: 2rem;
 		background-image:
 			linear-gradient(45deg, transparent 50%, var(--app-clr-on-surface-text-secondary) 50%),
@@ -922,7 +1158,7 @@
 	.btn {
 		border: var(--app-border-thick);
 		border-radius: var(--app-radius-md);
-		padding: 0.45rem 0.75rem;
+		padding: var(--app-space-sm) var(--app-space-md);
 		background: var(--app-clr-surface-raised);
 		color: var(--app-clr-on-surface-text);
 		box-shadow: var(--app-shadow-small);
@@ -996,7 +1232,7 @@
 		border-radius: var(--app-radius-sm);
 		background: var(--app-clr-surface-raised);
 		color: var(--app-clr-on-surface-text);
-		padding: 0.25rem 0.5rem;
+		padding: var(--app-space-xs) var(--app-space-sm);
 		cursor: pointer;
 		box-shadow: var(--app-shadow-small);
 		transition:
@@ -1037,13 +1273,13 @@
 
 	.schedule {
 		display: grid;
-		gap: 2px;
+		gap: var(--app-space-xs);
 	}
 
 	.schedule-item {
 		display: flex;
 		justify-content: space-between;
-		padding: 0.3rem 0.45rem;
+		padding: var(--app-space-xs) var(--app-space-sm);
 		border-radius: var(--app-radius-sm);
 		color: var(--app-clr-on-surface-text-muted);
 		background: color-mix(in oklab, var(--app-clr-surface-raised) 55%, transparent);
@@ -1059,7 +1295,7 @@
 		padding: 0;
 		list-style: none;
 		display: grid;
-		gap: var(--app-space-sm);
+		gap: var(--app-space-md);
 	}
 
 	.list-item {
@@ -1067,13 +1303,107 @@
 		border-radius: var(--app-radius-md);
 		padding: var(--app-space-sm);
 		display: grid;
-		gap: var(--app-space-sm);
+		gap: var(--app-space-md);
 		background: color-mix(in oklab, var(--app-clr-surface-raised) 62%, transparent);
+	}
+
+	.todo-add-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: var(--app-space-sm);
+		align-items: center;
+	}
+
+	.todo-list {
+		gap: var(--app-space-sm);
+	}
+
+	.task-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: var(--app-space-sm);
+		padding: 0;
+	}
+
+	.task-row form {
+		margin: 0;
+	}
+
+	.task-row-actions {
+		display: inline-flex;
+		gap: var(--app-space-xs);
+		justify-self: end;
+	}
+
+	.task-title-form {
+		min-width: 0;
+	}
+
+	.todo-add-row input,
+	.task-title-form input {
+		height: var(--app-control-height-base);
+		padding-top: 0;
+		padding-bottom: 0;
+	}
+
+	.task-title-form input.done {
+		color: var(--app-clr-on-surface-text-muted);
+		text-decoration: line-through;
+	}
+
+	.task-icon-btn {
+		width: var(--app-control-height-base);
+		height: var(--app-control-height-base);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-sm);
+		background: var(--app-clr-surface-raised);
+		color: var(--app-clr-on-surface-text);
+		box-shadow: var(--app-shadow-small);
+		cursor: pointer;
+		transition:
+			box-shadow var(--app-transition-fast),
+			transform var(--app-transition-fast),
+			background-color var(--app-transition-fast);
+	}
+
+	.task-icon-btn:hover {
+		box-shadow: var(--app-shadow-interactive-hover);
+		transform: translate(-1px, -1px);
+	}
+
+	.task-icon-btn:active {
+		box-shadow: var(--app-shadow-interactive-press);
+		transform: translate(1px, 1px);
+	}
+
+	.task-icon-btn-primary {
+		background: var(--app-clr-action-primary);
+		color: var(--app-clr-action-primary-text);
+	}
+
+	.task-icon-btn-success {
+		background: var(--app-clr-action-success);
+		color: var(--app-clr-action-success-text);
+	}
+
+	.task-icon-btn-critical {
+		background: var(--app-clr-action-critical);
+		color: var(--app-clr-action-critical-text);
+	}
+
+	.todo-carry-row {
+		margin-top: auto;
+		justify-items: end;
 	}
 
 	@media (max-width: 980px) {
 		.my-day-grid {
 			grid-template-columns: 1fr;
+			grid-template-rows: repeat(3, minmax(0, 1fr));
 			grid-template-areas:
 				'pomodoro'
 				'todos'

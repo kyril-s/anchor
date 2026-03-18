@@ -3,20 +3,31 @@
 	--app-clr-surface-page: #edeef3;
 	--app-clr-surface-card: #f5f5f8;
 	--app-clr-surface-raised: #eaebed;
+	--app-clr-surface-input: #efeff4;
 	--app-clr-on-surface-text: #1a1b2e;
 	--app-clr-on-surface-text-secondary: #5d5f7e;
 	--app-clr-on-surface-text-muted: #9394b0;
 	--app-clr-work: #b1266b;
 	--app-clr-break: #0d9488;
 	--app-clr-long-break: #9333ea;
-	--app-clr-success: #15803d;
-	--app-clr-success-dim: #dcfce7;
-	--app-clr-warning: #b45309;
-	--app-clr-warning-dim: #ffedd5;
-	--app-clr-error: #b91c1c;
-	--app-clr-error-dim: #fee2e2;
+	--app-clr-state-success: #15803d;
+	--app-clr-state-success-dim: #dcfce7;
+	--app-clr-state-warning: #b45309;
+	--app-clr-state-warning-dim: #ffedd5;
+	--app-clr-state-critical: #b91c1c;
+	--app-clr-state-critical-dim: #fee2e2;
+	--app-clr-success: var(--app-clr-state-success);
+	--app-clr-success-dim: var(--app-clr-state-success-dim);
+	--app-clr-warning: var(--app-clr-state-warning);
+	--app-clr-warning-dim: var(--app-clr-state-warning-dim);
+	--app-clr-error: var(--app-clr-state-critical);
+	--app-clr-error-dim: var(--app-clr-state-critical-dim);
 	--app-clr-action-primary: #1a1a1a;
 	--app-clr-action-primary-text: #ffffff;
+	--app-clr-action-success: var(--app-clr-state-success);
+	--app-clr-action-success-text: #ffffff;
+	--app-clr-action-critical: var(--app-clr-state-critical);
+	--app-clr-action-critical-text: #ffffff;
 	--app-clr-focus-ring: rgba(59, 130, 246, 0.5);
 
 	/* Borders, radii, and shadows */
@@ -32,6 +43,9 @@
 	--app-transition-fast: 150ms ease;
 	--app-transition-base: 250ms ease;
 	--app-nav-height: 3.25rem;
+	--app-control-height-base: 2.5rem;
+	--app-control-height-pomodoro-tab: 2.125rem;
+	--app-control-height-chip: 1.875rem;
 
 	/* Spacing and typography */
 	--app-space-xs: 0.25rem;

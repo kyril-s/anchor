@@ -19,12 +19,6 @@
 		hideHandle = null;
 	}
 
-	function dismiss() {
-		clearHideHandle();
-		visible = false;
-		onDismiss();
-	}
-
 	$effect(() => {
 		// `stamp` lets parent retrigger this effect for identical message text.
 		void stamp;
@@ -49,9 +43,6 @@
 	<div class="toast-wrap" aria-live={tone === 'error' ? 'assertive' : 'polite'} aria-atomic="true">
 		<div class="toast" data-tone={tone} role={tone === 'error' ? 'alert' : 'status'}>
 			<p>{message}</p>
-			<button type="button" class="toast-close" aria-label="Dismiss notification" onclick={dismiss}>
-				x
-			</button>
 		</div>
 	</div>
 {/if}
@@ -71,55 +62,32 @@
 		pointer-events: auto;
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		justify-content: flex-start;
 		gap: var(--app-space-sm);
 		padding: var(--app-space-sm) var(--app-space-md);
 		border: var(--app-border-thick);
 		border-radius: var(--app-radius-md);
-		box-shadow: var(--app-shadow-medium);
+		box-shadow: var(--app-shadow-large);
 		font-size: var(--app-text-sm);
 	}
 
 	.toast[data-tone='success'] {
-		background: var(--app-clr-success-dim, #dcfce7);
-		color: var(--app-clr-success, #15803d);
+		background: var(--app-clr-state-success-dim, #dcfce7);
+		color: var(--app-clr-state-success, #15803d);
 	}
 
 	.toast[data-tone='warning'] {
-		background: var(--app-clr-warning-dim, #ffedd5);
-		color: var(--app-clr-warning, #b45309);
+		background: var(--app-clr-state-warning-dim, #ffedd5);
+		color: var(--app-clr-state-warning, #b45309);
 	}
 
 	.toast[data-tone='error'] {
-		background: var(--app-clr-error-dim, #fee2e2);
-		color: var(--app-clr-error, #b91c1c);
+		background: var(--app-clr-state-critical-dim, #fee2e2);
+		color: var(--app-clr-state-critical, #b91c1c);
 	}
 
 	.toast p {
 		margin: 0;
 		font-weight: 700;
-	}
-
-	.toast-close {
-		font: inherit;
-		line-height: 1;
-		width: 1.75rem;
-		height: 1.75rem;
-		border: var(--app-border-thick);
-		border-radius: var(--app-radius-sm);
-		background: var(--app-clr-surface-raised);
-		color: currentColor;
-		box-shadow: var(--app-shadow-small);
-		cursor: pointer;
-	}
-
-	.toast-close:hover {
-		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
-	}
-
-	.toast-close:active {
-		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
 	}
 </style>
