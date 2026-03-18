@@ -12,6 +12,13 @@ import {
 import type { Actions, PageServerLoad } from './$types';
 
 const APP_CONFIG_ID = 1;
+const DEFAULT_UI_SETTINGS = {
+	themeHue: 330,
+	workMinutes: 25,
+	breakMinutes: 5,
+	longBreakMinutes: 25,
+	longBreakInterval: 4
+};
 
 function getTodayDateString() {
 	return new Date().toISOString().slice(0, 10);
@@ -35,6 +42,30 @@ function getNumber(formData: FormData, key: string) {
 
 function getBoolean(formData: FormData, key: string) {
 	return getString(formData, key) === 'true';
+}
+
+function clamp(value: number, min: number, max: number) {
+	return Math.max(min, Math.min(max, value));
+}
+
+function normalizeUiSettings(raw: unknown) {
+	const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+	const toNumber = (key: keyof typeof DEFAULT_UI_SETTINGS, fallback: number) => {
+		const value = Number(source[key]);
+		return Number.isFinite(value) ? value : fallback;
+	};
+
+	return {
+		themeHue: clamp(toNumber('themeHue', DEFAULT_UI_SETTINGS.themeHue), 0, 360),
+		workMinutes: clamp(toNumber('workMinutes', DEFAULT_UI_SETTINGS.workMinutes), 1, 120),
+		breakMinutes: clamp(toNumber('breakMinutes', DEFAULT_UI_SETTINGS.breakMinutes), 1, 60),
+		longBreakMinutes: clamp(toNumber('longBreakMinutes', DEFAULT_UI_SETTINGS.longBreakMinutes), 1, 120),
+		longBreakInterval: clamp(
+			Math.floor(toNumber('longBreakInterval', DEFAULT_UI_SETTINGS.longBreakInterval)),
+			1,
+			20
+		)
+	};
 }
 
 async function getOrCreateConfig() {
@@ -68,6 +99,7 @@ export const load: PageServerLoad = async () => {
 		tasks,
 		note: note?.content ?? '',
 		sessions,
+		uiSettings: normalizeUiSettings(config.uiSettingsJson),
 		notionConfig: {
 			hasApiKey: Boolean(config.notionApiKey || env.NOTION_API_KEY),
 			tasksDbId: config.tasksDbId ?? env.NOTION_TASKS_DB_ID ?? '',
@@ -194,6 +226,26 @@ export const actions: Actions = {
 		});
 
 		return { message: 'Pomodoro session saved.' };
+	},
+
+	saveUiSettings: async ({ request }) => {
+		const formData = await request.formData();
+		const settings = normalizeUiSettings({
+			themeHue: getNumber(formData, 'themeHue'),
+			workMinutes: getNumber(formData, 'workMinutes'),
+			breakMinutes: getNumber(formData, 'breakMinutes'),
+			longBreakMinutes: getNumber(formData, 'longBreakMinutes'),
+			longBreakInterval: getNumber(formData, 'longBreakInterval')
+		});
+
+		await db
+			.update(appConfig)
+			.set({
+				uiSettingsJson: settings
+			})
+			.where(eq(appConfig.id, APP_CONFIG_ID));
+
+		return { message: 'Pomodoro settings saved.' };
 	},
 
 	saveNotionConfig: async ({ request }) => {

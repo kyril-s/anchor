@@ -1,17 +1,94 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import type { ActionData, PageData } from './$types';
 
-	let { data, form }: { data: PageData; form: ActionData } = $props();
+	type Mode = 'work' | 'break' | 'longBreak';
 
-	const initialDuration = 25;
-	let durationMinutes = initialDuration;
-	let remainingSeconds = initialDuration * 60;
+	let { data, form }: { data: PageData; form: ActionData } = $props();
+	const uiSettings = data.uiSettings;
+
+	let currentHue = $state(uiSettings.themeHue);
+	let workMinutes = $state(uiSettings.workMinutes);
+	let breakMinutes = $state(uiSettings.breakMinutes);
+	let longBreakMinutes = $state(uiSettings.longBreakMinutes);
+	let longBreakInterval = $state(uiSettings.longBreakInterval);
+	let selectedTaskId = $state(data.tasks[0]?.id?.toString() ?? '');
+
+	const workSeconds = $derived(workMinutes * 60);
+	const breakSeconds = $derived(breakMinutes * 60);
+	const longBreakSeconds = $derived(longBreakMinutes * 60);
+	let completedWorkSessions = $state(0);
+
+	let currentMode = $state<Mode>('work');
+	let timeRemaining = $state(workSeconds);
+	let timerStatus = $state<'idle' | 'running' | 'paused' | 'completed'>('idle');
 	let timerHandle: ReturnType<typeof setInterval> | null = null;
-	let timerStatus: 'idle' | 'running' | 'paused' | 'completed' = 'idle';
-	let selectedTaskId = data.tasks[0]?.id?.toString() ?? '';
-	let sessionStartedAt = '';
-	let sessionEndedAt = '';
-	let sessionStatus = 'completed';
+
+	let sessionStartedAt = $state('');
+	let sessionEndedAt = $state('');
+	let sessionStatus = $state('completed');
+	let completedDurationMinutes = $state(workMinutes);
+
+	const modeOrder: Mode[] = ['work', 'break', 'longBreak'];
+
+	function clamp(value: number, min: number, max: number) {
+		return Math.max(min, Math.min(max, value));
+	}
+
+	function hsl(h: number, s: number, l: number) {
+		return `hsl(${h} ${s}% ${l}%)`;
+	}
+
+	function hsla(h: number, s: number, l: number, a: number) {
+		return `hsl(${h} ${s}% ${l}% / ${a})`;
+	}
+
+	function applyColors(dark: boolean) {
+		const h = currentHue;
+		const root = document.documentElement.style;
+		const breakH = (h + 150) % 360;
+		const longH = (h + 80) % 360;
+
+		if (dark) {
+			root.setProperty('--app-clr-surface-page', hsl(h, 30, 6));
+			root.setProperty('--app-clr-surface-card', hsl(h, 30, 12));
+			root.setProperty('--app-clr-surface-raised', hsl(h, 28, 18));
+			root.setProperty('--app-clr-on-surface-text', hsl(h, 12, 92));
+			root.setProperty('--app-clr-on-surface-text-secondary', hsl(h, 12, 63));
+			root.setProperty('--app-clr-on-surface-text-muted', hsl(h, 10, 43));
+			root.setProperty('--app-clr-work', hsl(h, 65, 68));
+			root.setProperty('--app-clr-break', hsl(breakH, 55, 68));
+			root.setProperty('--app-clr-long-break', hsl(longH, 60, 68));
+			root.setProperty('--app-clr-action-primary', '#f0f0f0');
+			root.setProperty('--app-clr-action-primary-text', '#111111');
+			root.setProperty('--app-clr-focus-ring', hsla(h, 60, 70, 0.5));
+		} else {
+			root.setProperty('--app-clr-surface-page', hsl(h, 8, 93));
+			root.setProperty('--app-clr-surface-card', hsl(h, 8, 96));
+			root.setProperty('--app-clr-surface-raised', hsl(h, 6, 91));
+			root.setProperty('--app-clr-on-surface-text', hsl(h, 20, 14));
+			root.setProperty('--app-clr-on-surface-text-secondary', hsl(h, 14, 43));
+			root.setProperty('--app-clr-on-surface-text-muted', hsl(h, 10, 63));
+			root.setProperty('--app-clr-work', hsl(h, 65, 42));
+			root.setProperty('--app-clr-break', hsl(breakH, 55, 35));
+			root.setProperty('--app-clr-long-break', hsl(longH, 60, 38));
+			root.setProperty('--app-clr-action-primary', '#1a1a1a');
+			root.setProperty('--app-clr-action-primary-text', '#ffffff');
+			root.setProperty('--app-clr-focus-ring', hsla(h, 70, 60, 0.5));
+		}
+	}
+
+	function applyTheme() {
+		const isDark = timerStatus === 'running' && currentMode === 'work';
+		document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+		applyColors(isDark);
+	}
+
+	function secondsForMode(mode: Mode) {
+		if (mode === 'work') return workSeconds;
+		if (mode === 'longBreak') return longBreakSeconds;
+		return breakSeconds;
+	}
 
 	function formatClock(totalSeconds: number) {
 		const mins = Math.floor(totalSeconds / 60)
@@ -23,160 +100,333 @@
 		return `${mins}:${secs}`;
 	}
 
-	function startTimer() {
-		if (timerStatus === 'running') return;
-		if (!sessionStartedAt) sessionStartedAt = new Date().toISOString();
-		timerStatus = 'running';
-		sessionStatus = 'in_progress';
-
-		if (timerHandle) clearInterval(timerHandle);
-		timerHandle = setInterval(() => {
-			if (remainingSeconds <= 1) {
-				remainingSeconds = 0;
-				sessionEndedAt = new Date().toISOString();
-				sessionStatus = 'completed';
-				timerStatus = 'completed';
-				if (timerHandle) clearInterval(timerHandle);
-				timerHandle = null;
-				return;
-			}
-			remainingSeconds -= 1;
-		}, 1000);
+	function modeLabel(mode: Mode) {
+		if (mode === 'longBreak') return 'Long Break';
+		if (mode === 'break') return 'Break';
+		return 'Work';
 	}
 
-	function pauseTimer() {
-		if (timerStatus !== 'running') return;
-		timerStatus = 'paused';
-		if (timerHandle) clearInterval(timerHandle);
+	function formatModeDuration(mode: Mode) {
+		return `${Math.ceil(secondsForMode(mode) / 60)}m`;
+	}
+
+	function stopInterval() {
+		if (!timerHandle) return;
+		clearInterval(timerHandle);
 		timerHandle = null;
+	}
+
+	function tick() {
+		timeRemaining -= 1;
+		if (timeRemaining >= 0) return;
+
+		const previousMode = currentMode;
+		completedDurationMinutes = Math.round(secondsForMode(previousMode) / 60);
+		sessionEndedAt = new Date().toISOString();
+		sessionStatus = 'completed';
+		timerStatus = 'completed';
+		stopInterval();
+
+		if (previousMode === 'work') {
+			completedWorkSessions += 1;
+			const useLongBreak = completedWorkSessions % longBreakInterval === 0;
+			currentMode = useLongBreak ? 'longBreak' : 'break';
+		} else {
+			currentMode = 'work';
+		}
+		timeRemaining = secondsForMode(currentMode);
+	}
+
+	function startPause() {
+		if (timerStatus === 'running') {
+			timerStatus = 'paused';
+			stopInterval();
+			return;
+		}
+
+		if (!sessionStartedAt) {
+			sessionStartedAt = new Date().toISOString();
+			sessionStatus = 'in_progress';
+		}
+		timerStatus = 'running';
+		stopInterval();
+		timerHandle = setInterval(tick, 1000);
 	}
 
 	function resetTimer() {
-		if (timerHandle) clearInterval(timerHandle);
-		timerHandle = null;
+		stopInterval();
 		timerStatus = 'idle';
-		remainingSeconds = durationMinutes * 60;
+		currentMode = 'work';
+		timeRemaining = workSeconds;
+		sessionStartedAt = '';
+		sessionEndedAt = '';
+		sessionStatus = 'completed';
+		completedDurationMinutes = workMinutes;
+		completedWorkSessions = 0;
+	}
+
+	function switchMode(mode: Mode) {
+		if (mode === currentMode) return;
+		stopInterval();
+		timerStatus = 'idle';
+		currentMode = mode;
+		timeRemaining = secondsForMode(mode);
 		sessionStartedAt = '';
 		sessionEndedAt = '';
 		sessionStatus = 'completed';
 	}
 
-	$effect(() => {
-		if (timerStatus === 'idle') {
-			remainingSeconds = durationMinutes * 60;
+	function switchModeForward() {
+		const idx = modeOrder.indexOf(currentMode);
+		switchMode(modeOrder[(idx + 1) % modeOrder.length]);
+	}
+
+	function switchModeBackward() {
+		const idx = modeOrder.indexOf(currentMode);
+		switchMode(modeOrder[(idx - 1 + modeOrder.length) % modeOrder.length]);
+	}
+
+	function applyPomodoroSettings() {
+		workMinutes = clamp(Math.floor(workMinutes || 25), 1, 120);
+		breakMinutes = clamp(Math.floor(breakMinutes || 5), 1, 60);
+		longBreakMinutes = clamp(Math.floor(longBreakMinutes || 25), 1, 120);
+		longBreakInterval = clamp(Math.floor(longBreakInterval || 4), 1, 20);
+		currentHue = clamp(Math.floor(currentHue || 330), 0, 360);
+
+		if (timerStatus === 'idle' || timerStatus === 'paused') {
+			timeRemaining = secondsForMode(currentMode);
 		}
+	}
+
+	function applyShortcut(mode: Mode, minutes: number) {
+		if (timerStatus === 'running') return;
+		if (mode === 'work') workMinutes = minutes;
+		if (mode === 'break') breakMinutes = minutes;
+		if (mode === 'longBreak') longBreakMinutes = minutes;
+		applyPomodoroSettings();
+	}
+
+	function buildSchedule() {
+		const items: { mode: Mode; isActive: boolean }[] = [];
+		let simMode: Mode = currentMode;
+		let simCompletedWork = completedWorkSessions;
+
+		items.push({ mode: simMode, isActive: true });
+		while (items.length < 8) {
+			if (simMode === 'work') {
+				simCompletedWork += 1;
+				simMode = simCompletedWork % longBreakInterval === 0 ? 'longBreak' : 'break';
+			} else {
+				simMode = 'work';
+			}
+			items.push({ mode: simMode, isActive: false });
+		}
+		return items;
+	}
+
+	function onKeydown(event: KeyboardEvent) {
+		const target = event.target as HTMLElement | null;
+		if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+
+		if (event.code === 'Space') {
+			event.preventDefault();
+			startPause();
+		}
+		if (event.code === 'KeyR') resetTimer();
+		if (event.code === 'BracketRight') switchModeForward();
+		if (event.code === 'BracketLeft') switchModeBackward();
+	}
+
+	$effect(() => {
+		applyTheme();
 	});
 
 	$effect(() => {
-		if (timerStatus === 'completed' && !sessionEndedAt) {
-			sessionEndedAt = new Date().toISOString();
-		}
+		applyPomodoroSettings();
 	});
+
+	$effect(() => {
+		window.addEventListener('keydown', onKeydown);
+		return () => window.removeEventListener('keydown', onKeydown);
+	});
+
+	onDestroy(() => stopInterval());
 </script>
 
-<main>
-	<h1>Anchor</h1>
-	<p>{data.today}</p>
+<main class="page-shell" data-mode={currentMode} data-running={timerStatus === 'running'}>
+	<header class="page-header card">
+		<div>
+			<h1>Anchor</h1>
+			<p>{data.today}</p>
+		</div>
+		{#if form?.message}
+			<p class="message">{form.message}</p>
+		{/if}
+	</header>
 
-	{#if form?.message}
-		<p class="message">{form.message}</p>
-	{/if}
+	<section class="card">
+		<h2>Pomodoro</h2>
+		<div class="mode-toggle-wrap">
+			<button
+				type="button"
+				class:active={currentMode === 'work'}
+				class="mode-btn"
+				onclick={() => switchMode('work')}>Work</button
+			>
+			<button
+				type="button"
+				class:active={currentMode === 'break'}
+				class="mode-btn"
+				onclick={() => switchMode('break')}>Break</button
+			>
+			<button
+				type="button"
+				class:active={currentMode === 'longBreak'}
+				class="mode-btn"
+				onclick={() => switchMode('longBreak')}>Long Break</button
+			>
+		</div>
 
-	<section>
+		<p class="clock">{formatClock(timeRemaining)}</p>
+
+		<div class="row">
+			<button type="button" class="btn btn-primary" onclick={startPause}>
+				{timerStatus === 'running' ? 'Pause' : 'Start'}
+			</button>
+			<button type="button" class="btn" onclick={resetTimer}>Reset</button>
+		</div>
+
+		<div class="settings-grid">
+			<label>
+				Linked task
+				<select bind:value={selectedTaskId}>
+					<option value="">No task</option>
+					{#each data.tasks as task}
+						<option value={task.id}>{task.title}</option>
+					{/each}
+				</select>
+			</label>
+		</div>
+
+		<div class="shortcut-wrap">
+			<div class="shortcut-row">
+				<span>Work</span>
+				<button type="button" class="chip" onclick={() => applyShortcut('work', 15)}>15m</button>
+				<button type="button" class="chip" onclick={() => applyShortcut('work', 25)}>25m</button>
+				<button type="button" class="chip" onclick={() => applyShortcut('work', 45)}>45m</button>
+			</div>
+			<div class="shortcut-row">
+				<span>Break</span>
+				<button type="button" class="chip" onclick={() => applyShortcut('break', 2)}>2m</button>
+				<button type="button" class="chip" onclick={() => applyShortcut('break', 5)}>5m</button>
+				<button type="button" class="chip" onclick={() => applyShortcut('break', 15)}>15m</button>
+			</div>
+			<div class="shortcut-row">
+				<span>Long</span>
+				<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 25)}>25m</button>
+				<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 45)}>45m</button>
+				<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 60)}>60m</button>
+			</div>
+		</div>
+
+		<form method="post" action="?/saveUiSettings" class="settings-grid">
+			<label>
+				Work (min)
+				<input name="workMinutes" type="number" min="1" max="120" bind:value={workMinutes} />
+			</label>
+			<label>
+				Break (min)
+				<input name="breakMinutes" type="number" min="1" max="60" bind:value={breakMinutes} />
+			</label>
+			<label>
+				Long Break (min)
+				<input name="longBreakMinutes" type="number" min="1" max="120" bind:value={longBreakMinutes} />
+			</label>
+			<label>
+				Long break every
+				<input name="longBreakInterval" type="number" min="1" max="20" bind:value={longBreakInterval} />
+			</label>
+			<label class="hue-label">
+				Theme hue
+				<input name="themeHue" type="range" min="0" max="360" bind:value={currentHue} />
+			</label>
+			<button class="btn" type="submit" disabled={timerStatus === 'running'}>Save Pomodoro settings</button>
+		</form>
+
+		<form method="post" action="?/saveSession" class="session-save">
+			<input type="hidden" name="day" value={data.today} />
+			<input type="hidden" name="taskId" value={selectedTaskId} />
+			<input type="hidden" name="durationMinutes" value={completedDurationMinutes} />
+			<input type="hidden" name="startedAt" value={sessionStartedAt} />
+			<input type="hidden" name="endedAt" value={sessionEndedAt} />
+			<input type="hidden" name="status" value={sessionStatus} />
+			<button class="btn" type="submit" disabled={timerStatus !== 'completed'}>
+				Save completed session
+			</button>
+		</form>
+
+		<div class="schedule">
+			{#each buildSchedule() as step}
+				<div class="schedule-item" class:active={step.isActive}>
+					<span>{modeLabel(step.mode)}</span>
+					<span>{formatModeDuration(step.mode)}</span>
+				</div>
+			{/each}
+		</div>
+	</section>
+
+	<section class="card">
 		<h2>Today&apos;s Tasks</h2>
-		<form method="post" action="?/addTask">
+		<form method="post" action="?/addTask" class="row">
 			<input type="hidden" name="day" value={data.today} />
 			<input name="title" type="text" placeholder="Add a task..." required />
-			<button type="submit">Add</button>
+			<button class="btn btn-primary" type="submit">Add</button>
 		</form>
 
 		<form method="post" action="?/carryUnfinished">
 			<input type="hidden" name="fromDay" value={data.today} />
-			<button type="submit">Move unfinished to tomorrow</button>
+			<button class="btn" type="submit">Move unfinished to tomorrow</button>
 		</form>
 
 		<ul>
 			{#if data.tasks.length === 0}
-				<li>No tasks yet.</li>
+				<li class="list-item">No tasks yet.</li>
 			{/if}
 			{#each data.tasks as task}
-				<li>
-					<form method="post" action="?/toggleTask">
+				<li class="list-item">
+					<form method="post" action="?/toggleTask" class="row">
 						<input type="hidden" name="id" value={task.id} />
 						<input type="hidden" name="done" value={task.done ? 'false' : 'true'} />
-						<button type="submit">{task.done ? 'Mark open' : 'Mark done'}</button>
+						<button class="btn" type="submit">{task.done ? 'Mark open' : 'Mark done'}</button>
 					</form>
 
-					<form method="post" action="?/updateTask">
+					<form method="post" action="?/updateTask" class="row">
 						<input type="hidden" name="id" value={task.id} />
 						<input name="title" value={task.title} required />
-						<button type="submit">Save</button>
+						<button class="btn" type="submit">Save</button>
 					</form>
 
 					<form method="post" action="?/deleteTask">
 						<input type="hidden" name="id" value={task.id} />
-						<button type="submit">Delete</button>
+						<button class="btn" type="submit">Delete</button>
 					</form>
 				</li>
 			{/each}
 		</ul>
 	</section>
 
-	<section>
-		<h2>Pomodoro</h2>
-		<label>
-			Duration (minutes)
-			<input type="number" min="1" bind:value={durationMinutes} />
-		</label>
-		<label>
-			Linked task
-			<select bind:value={selectedTaskId}>
-				<option value="">No task</option>
-				{#each data.tasks as task}
-					<option value={task.id}>{task.title}</option>
-				{/each}
-			</select>
-		</label>
-
-		<p class="clock">{formatClock(remainingSeconds)}</p>
-		<div class="row">
-			<button type="button" on:click={startTimer}>Start</button>
-			<button type="button" on:click={pauseTimer}>Pause</button>
-			<button type="button" on:click={resetTimer}>Reset</button>
-		</div>
-
-		<form method="post" action="?/saveSession">
-			<input type="hidden" name="day" value={data.today} />
-			<input type="hidden" name="taskId" value={selectedTaskId} />
-			<input type="hidden" name="durationMinutes" value={durationMinutes} />
-			<input type="hidden" name="startedAt" value={sessionStartedAt} />
-			<input type="hidden" name="endedAt" value={sessionEndedAt} />
-			<input type="hidden" name="status" value={sessionStatus} />
-			<button type="submit" disabled={timerStatus !== 'completed'}>Save completed session</button>
-		</form>
-
-		<ul>
-			{#if data.sessions.length === 0}
-				<li>No sessions saved yet.</li>
-			{/if}
-			{#each data.sessions as session}
-				<li>{session.durationMinutes} min - {session.status}</li>
-			{/each}
-		</ul>
-	</section>
-
-	<section>
+	<section class="card">
 		<h2>Quick Notes</h2>
 		<form method="post" action="?/saveNote">
 			<input type="hidden" name="day" value={data.today} />
 			<textarea name="content" rows="6" placeholder="Drop your notes here...">{data.note}</textarea>
-			<button type="submit">Save note</button>
+			<button class="btn" type="submit">Save note</button>
 		</form>
 	</section>
 
-	<section>
+	<section class="card">
 		<h2>Notion Settings</h2>
-		<form method="post" action="?/saveNotionConfig">
+		<form method="post" action="?/saveNotionConfig" class="settings-grid">
 			<label>
 				Notion secret key
 				<input
@@ -193,74 +443,147 @@
 				Notes DB ID
 				<input type="text" name="notesDbId" value={data.notionConfig.notesDbId} />
 			</label>
-
-			<h3>Task mapping</h3>
 			<label>
-				Title property
+				Task title property
 				<input type="text" name="taskTitleProperty" value={data.notionConfig.taskFieldMap.title} />
 			</label>
 			<label>
-				Done property
+				Task done property
 				<input type="text" name="taskDoneProperty" value={data.notionConfig.taskFieldMap.done} />
 			</label>
 			<label>
-				Day property
+				Task day property
 				<input type="text" name="taskDayProperty" value={data.notionConfig.taskFieldMap.day} />
 			</label>
 			<label>
-				Carried over property
+				Task carried-over property
 				<input type="text" name="taskCarriedOverProperty" value={data.notionConfig.taskFieldMap.carriedOver} />
 			</label>
-
-			<h3>Note mapping</h3>
 			<label>
-				Title property
+				Note title property
 				<input type="text" name="noteTitleProperty" value={data.notionConfig.noteFieldMap.title} />
 			</label>
 			<label>
-				Content property
+				Note content property
 				<input type="text" name="noteContentProperty" value={data.notionConfig.noteFieldMap.content} />
 			</label>
 			<label>
-				Day property
+				Note day property
 				<input type="text" name="noteDayProperty" value={data.notionConfig.noteFieldMap.day} />
 			</label>
-			<button type="submit">Save Notion settings</button>
+			<button class="btn" type="submit">Save Notion settings</button>
 		</form>
 
 		<form method="post" action="?/syncNotion">
-			<button type="submit">Sync now</button>
+			<button class="btn btn-primary" type="submit">Sync now</button>
 		</form>
 	</section>
 </main>
 
 <style>
-	main {
-		max-width: 760px;
+	.page-shell {
+		max-width: 960px;
 		margin: 0 auto;
-		padding: 1.25rem;
+		padding: var(--app-space-xl) var(--app-space-md);
 		display: grid;
-		gap: 1rem;
+		gap: var(--app-space-md);
 	}
 
-	section {
-		border: 1px solid #d4d4d8;
-		border-radius: 8px;
-		padding: 1rem;
+	.card {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-lg);
+		padding: var(--app-space-md);
+		background: var(--app-clr-surface-card);
+		box-shadow: var(--app-shadow-card);
 		display: grid;
-		gap: 0.75rem;
+		gap: var(--app-space-sm);
+		transition: background-color 0.4s ease;
+	}
+
+	.page-header {
+		grid-template-columns: 1fr;
+	}
+
+	h1,
+	h2 {
+		margin: 0;
+	}
+
+	h1 {
+		font-size: var(--app-text-xl);
+	}
+
+	p {
+		margin: 0;
+	}
+
+	.message {
+		padding: var(--app-space-sm);
+		border: 2px solid var(--app-clr-break);
+		border-radius: var(--app-radius-md);
+		color: var(--app-clr-on-surface-text-secondary);
+		background: color-mix(in oklab, var(--app-clr-surface-raised) 82%, transparent);
+	}
+
+	.mode-toggle-wrap {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: var(--app-space-xs);
+	}
+
+	.mode-btn {
+		font: inherit;
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-sm);
+		padding: var(--app-space-sm);
+		background: var(--app-clr-surface-raised);
+		color: var(--app-clr-on-surface-text-secondary);
+		cursor: pointer;
+	}
+
+	.mode-btn.active {
+		color: white;
+	}
+
+	.page-shell[data-mode='work'] .mode-btn.active {
+		background: var(--app-clr-work);
+	}
+
+	.page-shell[data-mode='break'] .mode-btn.active {
+		background: var(--app-clr-break);
+	}
+
+	.page-shell[data-mode='longBreak'] .mode-btn.active {
+		background: var(--app-clr-long-break);
+	}
+
+	.clock {
+		font-family: var(--app-font-mono);
+		font-size: var(--app-text-timer);
+		font-weight: 700;
+		letter-spacing: -0.02em;
 	}
 
 	form {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		align-items: center;
+		display: grid;
+		gap: var(--app-space-sm);
 	}
 
-	textarea,
+	.row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--app-space-sm);
+	}
+
+	label {
+		display: grid;
+		gap: var(--app-space-xs);
+		color: var(--app-clr-on-surface-text-secondary);
+	}
+
 	input,
 	select,
+	textarea,
 	button {
 		font: inherit;
 	}
@@ -268,55 +591,133 @@
 	input,
 	select,
 	textarea {
-		border: 1px solid #a1a1aa;
-		border-radius: 6px;
-		padding: 0.45rem 0.5rem;
+		width: 100%;
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		padding: 0.45rem 0.55rem;
+		background: var(--app-clr-surface-raised);
+		color: var(--app-clr-on-surface-text);
 	}
 
-	button {
-		border: 1px solid #52525b;
-		border-radius: 6px;
-		padding: 0.45rem 0.7rem;
-		background: #fafafa;
+	input[type='range'] {
+		padding: 0;
+		height: 0.5rem;
+		accent-color: var(--app-clr-work);
+	}
+
+	.btn {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		padding: 0.45rem 0.75rem;
+		background: var(--app-clr-surface-raised);
+		color: var(--app-clr-on-surface-text);
+		box-shadow: var(--app-shadow-btn);
+		cursor: pointer;
+		transition:
+			box-shadow var(--app-transition-fast),
+			transform var(--app-transition-fast),
+			background-color var(--app-transition-fast);
+	}
+
+	.btn:hover {
+		box-shadow: var(--app-shadow-btn-hover);
+		transform: translate(-1px, -1px);
+	}
+
+	.btn:active {
+		box-shadow: var(--app-shadow-btn-press);
+		transform: translate(1px, 1px);
+	}
+
+	.btn:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+		transform: none;
+		box-shadow: var(--app-shadow-btn);
+	}
+
+	.btn-primary {
+		background: var(--app-clr-action-primary);
+		color: var(--app-clr-action-primary-text);
+	}
+
+	.settings-grid {
+		display: grid;
+		gap: var(--app-space-sm);
+		grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+	}
+
+	.hue-label {
+		grid-column: 1 / -1;
+	}
+
+	.shortcut-wrap {
+		display: grid;
+		gap: var(--app-space-xs);
+	}
+
+	.shortcut-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--app-space-xs);
+		color: var(--app-clr-on-surface-text-secondary);
+	}
+
+	.chip {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-sm);
+		background: var(--app-clr-surface-raised);
+		color: var(--app-clr-on-surface-text);
+		padding: 0.2rem 0.45rem;
+		cursor: pointer;
+	}
+
+	.session-save {
+		margin-top: var(--app-space-xs);
+	}
+
+	.schedule {
+		display: grid;
+		gap: 2px;
+	}
+
+	.schedule-item {
+		display: flex;
+		justify-content: space-between;
+		padding: 0.3rem 0.45rem;
+		border-radius: var(--app-radius-sm);
+		color: var(--app-clr-on-surface-text-muted);
+		background: color-mix(in oklab, var(--app-clr-surface-raised) 55%, transparent);
+	}
+
+	.schedule-item.active {
+		color: var(--app-clr-on-surface-text);
+		font-weight: 600;
 	}
 
 	ul {
-		list-style: none;
+		margin: 0;
 		padding: 0;
-		margin: 0;
+		list-style: none;
 		display: grid;
-		gap: 0.5rem;
+		gap: var(--app-space-sm);
 	}
 
-	li {
+	.list-item {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		padding: var(--app-space-sm);
 		display: grid;
-		gap: 0.5rem;
-		border: 1px dashed #d4d4d8;
-		padding: 0.6rem;
-		border-radius: 6px;
+		gap: var(--app-space-sm);
+		background: color-mix(in oklab, var(--app-clr-surface-raised) 62%, transparent);
 	}
 
-	label {
-		display: grid;
-		gap: 0.25rem;
-		width: 100%;
-	}
-
-	.clock {
-		font-size: 2rem;
-		font-weight: 700;
-		margin: 0;
-	}
-
-	.row {
-		display: flex;
-		gap: 0.5rem;
-	}
-
-	.message {
-		background: #f0f9ff;
-		border: 1px solid #bae6fd;
-		padding: 0.6rem;
-		border-radius: 6px;
+	input:focus-visible,
+	select:focus-visible,
+	textarea:focus-visible,
+	button:focus-visible {
+		outline: 3px solid var(--app-clr-focus-ring);
+		outline-offset: 2px;
 	}
 </style>

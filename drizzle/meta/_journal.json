@@ -15,6 +15,13 @@
       "when": 1773862000000,
       "tag": "0001_anchor_mvp",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773863000000,
+      "tag": "0002_ui_settings",
+      "breakpoints": true
     }
   ]
 }

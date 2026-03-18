@@ -1,0 +1,62 @@
+:root {
+	--app-clr-surface-page: #edeef3;
+	--app-clr-surface-card: #f5f5f8;
+	--app-clr-surface-raised: #eaebed;
+	--app-clr-on-surface-text: #1a1b2e;
+	--app-clr-on-surface-text-secondary: #5d5f7e;
+	--app-clr-on-surface-text-muted: #9394b0;
+	--app-clr-work: #dc3545;
+	--app-clr-break: #0d9488;
+	--app-clr-long-break: #9333ea;
+	--app-clr-action-primary: #1a1a1a;
+	--app-clr-action-primary-text: #ffffff;
+	--app-clr-focus-ring: rgba(59, 130, 246, 0.5);
+	--app-border-thick: 2px solid var(--app-clr-on-surface-text);
+	--app-radius-sm: 4px;
+	--app-radius-md: 6px;
+	--app-radius-lg: 8px;
+	--app-shadow-card: 8px 8px 0 #b0b1c0;
+	--app-shadow-btn: 3px 3px 0 #b0b1c0;
+	--app-shadow-btn-hover: 5px 5px 0 #b0b1c0;
+	--app-shadow-btn-press: 1px 1px 0 #b0b1c0;
+	--app-transition-fast: 150ms ease;
+	--app-transition-base: 250ms ease;
+	--app-space-xs: 0.25rem;
+	--app-space-sm: 0.5rem;
+	--app-space-md: 1rem;
+	--app-space-lg: 1.5rem;
+	--app-space-xl: 2.5rem;
+	--app-font-body:
+		system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+		'Open Sans', 'Helvetica Neue', sans-serif;
+	--app-font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, Monaco, Consolas,
+		monospace;
+	--app-text-sm: 0.875rem;
+	--app-text-base: 1rem;
+	--app-text-lg: 1.25rem;
+	--app-text-xl: 1.5rem;
+	--app-text-timer: clamp(2.25rem, 9vw, 4rem);
+	--app-leading-normal: 1.5;
+	--app-leading-tight: 1.1;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	min-height: 100%;
+}
+
+body {
+	font-family: var(--app-font-body);
+	font-size: var(--app-text-base);
+	line-height: var(--app-leading-normal);
+	background: var(--app-clr-surface-page);
+	color: var(--app-clr-on-surface-text);
+	transition: background-color 0.4s ease, color 0.4s ease;
+}

@@ -44,6 +44,7 @@ export const appConfig = pgTable('app_config', {
 	notesDbId: text('notes_db_id'),
 	taskFieldMapJson: jsonb('task_field_map_json').$type<Record<string, string>>().notNull().default({}),
 	noteFieldMapJson: jsonb('note_field_map_json').$type<Record<string, string>>().notNull().default({}),
+	uiSettingsJson: jsonb('ui_settings_json').$type<Record<string, unknown>>().notNull().default({}),
 	updatedAt: timestamp('updated_at')
 		.defaultNow()
 		.$onUpdate(() => new Date())
