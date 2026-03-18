@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { enhance } from '$app/forms';
+	import { onDestroy, untrack } from 'svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 	import type { ActionData, PageData } from './$types';
@@ -10,14 +11,14 @@
 	const DEFAULT_THEME_HUE = 330.216;
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
-	const uiSettings = data.uiSettings;
+	const uiSettings = untrack(() => data.uiSettings);
 
 	let currentHue = $state(uiSettings.themeHue);
 	let workMinutes = $state(uiSettings.workMinutes);
 	let breakMinutes = $state(uiSettings.breakMinutes);
 	let longBreakMinutes = $state(uiSettings.longBreakMinutes);
 	let longBreakInterval = $state(uiSettings.longBreakInterval);
-	let selectedTaskId = $state(data.tasks[0]?.id?.toString() ?? '');
+	let selectedTaskId = $state(untrack(() => data.tasks[0]?.id?.toString() ?? ''));
 	let activeTab = $state<MainTab>('my-day');
 	let settingsOpen = $state(false);
 
@@ -27,14 +28,14 @@
 	let completedWorkSessions = $state(0);
 
 	let currentMode = $state<Mode>('work');
-	let timeRemaining = $state(workSeconds);
+	let timeRemaining = $state(untrack(() => workSeconds));
 	let timerStatus = $state<TimerStatus>('idle');
 	let timerHandle: ReturnType<typeof setInterval> | null = null;
 
 	let sessionStartedAt = $state('');
 	let sessionEndedAt = $state('');
 	let sessionStatus = $state('completed');
-	let completedDurationMinutes = $state(workMinutes);
+	let completedDurationMinutes = $state(untrack(() => workMinutes));
 
 	const modeOrder: Mode[] = ['work', 'break', 'longBreak'];
 
@@ -217,7 +218,8 @@
 		longBreakInterval = clamp(Math.floor(longBreakInterval || 4), 1, 20);
 		currentHue = clamp(Math.floor(currentHue || DEFAULT_THEME_HUE), 0, 360);
 
-		if (timerStatus === 'idle' || timerStatus === 'paused') {
+		// Keep paused timers at their current remaining time.
+		if (timerStatus === 'idle') {
 			timeRemaining = secondsForMode(currentMode);
 		}
 	}
@@ -388,7 +390,7 @@
 					</select>
 				</label>
 
-				<form method="post" action="?/saveSession" class="session-save">
+				<form method="post" action="?/saveSession" class="session-save" use:enhance>
 					<input type="hidden" name="day" value={data.today} />
 					<input type="hidden" name="taskId" value={selectedTaskId} />
 					<input type="hidden" name="durationMinutes" value={completedDurationMinutes} />
@@ -412,13 +414,13 @@
 
 			<section class="card todos-card">
 				<h2>To-dos</h2>
-				<form method="post" action="?/addTask" class="row">
+				<form method="post" action="?/addTask" class="row" use:enhance>
 					<input type="hidden" name="day" value={data.today} />
 					<input name="title" type="text" placeholder="Add a task..." required />
 					<button class="btn btn-primary" type="submit">Add</button>
 				</form>
 
-				<form method="post" action="?/carryUnfinished">
+				<form method="post" action="?/carryUnfinished" use:enhance>
 					<input type="hidden" name="fromDay" value={data.today} />
 					<button class="btn" type="submit">Move unfinished to tomorrow</button>
 				</form>
@@ -429,19 +431,19 @@
 					{/if}
 					{#each data.tasks as task}
 						<li class="list-item">
-							<form method="post" action="?/toggleTask" class="row">
+							<form method="post" action="?/toggleTask" class="row" use:enhance>
 								<input type="hidden" name="id" value={task.id} />
 								<input type="hidden" name="done" value={task.done ? 'false' : 'true'} />
 								<button class="btn" type="submit">{task.done ? 'Mark open' : 'Mark done'}</button>
 							</form>
 
-							<form method="post" action="?/updateTask" class="row">
+							<form method="post" action="?/updateTask" class="row" use:enhance>
 								<input type="hidden" name="id" value={task.id} />
 								<input name="title" value={task.title} required />
 								<button class="btn" type="submit">Save</button>
 							</form>
 
-							<form method="post" action="?/deleteTask">
+							<form method="post" action="?/deleteTask" use:enhance>
 								<input type="hidden" name="id" value={task.id} />
 								<button class="btn" type="submit">Delete</button>
 							</form>
@@ -452,7 +454,7 @@
 
 			<section class="card dump-card">
 				<h2>Dump</h2>
-				<form method="post" action="?/saveNote">
+				<form method="post" action="?/saveNote" use:enhance>
 					<input type="hidden" name="day" value={data.today} />
 					<textarea name="content" rows="10" placeholder="Drop your notes here...">{data.note}</textarea>
 					<button class="btn" type="submit">Save note</button>
@@ -491,7 +493,7 @@
 					</div>
 				</div>
 
-				<form method="post" action="?/saveUiSettings" class="settings-grid">
+				<form method="post" action="?/saveUiSettings" class="settings-grid" use:enhance>
 					<label>
 						Work (min)
 						<input name="workMinutes" type="number" min="1" max="120" bind:value={workMinutes} />
@@ -520,7 +522,7 @@
 
 			<section class="card" data-elevated="false">
 				<h3>Notion Settings</h3>
-				<form method="post" action="?/saveNotionConfig" class="settings-grid">
+				<form method="post" action="?/saveNotionConfig" class="settings-grid" use:enhance>
 					<label>
 						Notion secret key
 						<input
@@ -572,7 +574,7 @@
 					<button class="btn" type="submit">Save Notion settings</button>
 				</form>
 
-				<form method="post" action="?/syncNotion">
+				<form method="post" action="?/syncNotion" use:enhance>
 					<button class="btn btn-primary" type="submit">Sync now</button>
 				</form>
 			</section>
