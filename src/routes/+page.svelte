@@ -21,6 +21,11 @@
 		warningTriggered: boolean;
 		criticalTriggered: boolean;
 	};
+	type CustomTimersState = {
+		timers: CustomTimer[];
+		activeTimerId: string | null;
+		timerNotice: string;
+	};
 	const DEFAULT_THEME_HUE = 330.216;
 	const DEFAULT_WORK_MINUTES = 25;
 	const DEFAULT_BREAK_MINUTES = 5;
@@ -28,9 +33,11 @@
 	const DEFAULT_LONG_BREAK_INTERVAL = 4;
 	const UI_SETTINGS_SAVE_DEBOUNCE_MS = 400;
 	const NOTION_SETTINGS_SAVE_DEBOUNCE_MS = 500;
+	const CUSTOM_TIMERS_SAVE_DEBOUNCE_MS = 600;
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const uiSettings = untrack(() => data.uiSettings);
+	const customTimersState = untrack(() => data.customTimersState as CustomTimersState | undefined);
 
 	let currentHue = $state(uiSettings.themeHue);
 	let workMinutes = $state(uiSettings.workMinutes);
@@ -56,14 +63,17 @@ let settingsTab = $state<SettingsTab>('preferences');
 	let uiSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
 	let notionSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
 	let customTimerHandle: ReturnType<typeof setInterval> | null = null;
+	let customTimersSaveHandle: ReturnType<typeof setTimeout> | null = null;
+	let hasHydratedCustomTimersState = false;
+	let lastCustomTimersSignature = '';
 
 	let timerDraftName = $state('');
 	let timerDraftDurationMinutes = $state(25);
 	let timerDraftWarningMinutes = $state(5);
 	let timerDraftCriticalMinutes = $state(1);
-	let customTimers = $state<CustomTimer[]>([]);
-	let activeCustomTimerId = $state<string | null>(null);
-	let timerNotice = $state('');
+	let customTimers = $state<CustomTimer[]>(customTimersState?.timers ?? []);
+	let activeCustomTimerId = $state<string | null>(customTimersState?.activeTimerId ?? null);
+	let timerNotice = $state(customTimersState?.timerNotice ?? '');
 	let customTimerCounter = 0;
 	let draggedTimerId = $state<string | null>(null);
 	let dragOverTimerId = $state<string | null>(null);
@@ -180,6 +190,37 @@ let settingsTab = $state<SettingsTab>('preferences');
 		if (!customTimerHandle) return;
 		clearInterval(customTimerHandle);
 		customTimerHandle = null;
+	}
+
+	function clearCustomTimersSaveHandle() {
+		if (!customTimersSaveHandle) return;
+		clearTimeout(customTimersSaveHandle);
+		customTimersSaveHandle = null;
+	}
+
+	function getCustomTimersPersistencePayload(): CustomTimersState {
+		return {
+			timers: customTimers,
+			activeTimerId: activeCustomTimerId,
+			timerNotice
+		};
+	}
+
+	async function persistCustomTimersState() {
+		const formData = new FormData();
+		formData.set('state', JSON.stringify(getCustomTimersPersistencePayload()));
+		try {
+			await fetch('?/saveCustomTimers', { method: 'POST', body: formData });
+		} catch {
+			// Keep the timers responsive; state will retry on the next change.
+		}
+	}
+
+	function queueCustomTimersStateSave() {
+		clearCustomTimersSaveHandle();
+		customTimersSaveHandle = setTimeout(() => {
+			void persistCustomTimersState();
+		}, CUSTOM_TIMERS_SAVE_DEBOUNCE_MS);
 	}
 
 	function normalizeTimerName(value: string) {
@@ -817,11 +858,24 @@ function queueNotionSettingsSave(event: Event) {
 		closeFinishDayPrompt();
 	});
 
+	$effect(() => {
+		const signature = JSON.stringify(getCustomTimersPersistencePayload());
+		if (!hasHydratedCustomTimersState) {
+			hasHydratedCustomTimersState = true;
+			lastCustomTimersSignature = signature;
+			return;
+		}
+		if (signature === lastCustomTimersSignature) return;
+		lastCustomTimersSignature = signature;
+		queueCustomTimersStateSave();
+	});
+
 	onDestroy(() => {
 		stopInterval();
 		clearUiSettingsSaveHandle();
 		clearNotionSettingsSaveHandle();
 		stopCustomTimerInterval();
+		clearCustomTimersSaveHandle();
 	});
 </script>
 
@@ -1452,7 +1506,7 @@ function queueNotionSettingsSave(event: Event) {
 		z-index: 30;
 		width: 100vw;
 		margin-left: calc(50% - 50vw);
-		background: var(--app-clr-surface-page);
+		background: var(--app-clr-surface-card);
 		border-bottom: var(--app-border-thick);
 	}
 

@@ -22,6 +22,31 @@ const DEFAULT_UI_SETTINGS = {
 	longBreakMinutes: 25,
 	longBreakInterval: 4
 };
+const MAX_CUSTOM_TIMERS = 100;
+
+type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
+type PersistedCustomTimer = {
+	id: string;
+	name: string;
+	totalSeconds: number;
+	remainingSeconds: number;
+	status: TimerStatus;
+	warningAtSeconds: number | null;
+	criticalAtSeconds: number | null;
+	warningTriggered: boolean;
+	criticalTriggered: boolean;
+};
+type PersistedCustomTimersState = {
+	timers: PersistedCustomTimer[];
+	activeTimerId: string | null;
+	timerNotice: string;
+};
+
+const DEFAULT_CUSTOM_TIMERS_STATE: PersistedCustomTimersState = {
+	timers: [],
+	activeTimerId: null,
+	timerNotice: ''
+};
 
 function getTodayDateString() {
 	return new Date().toISOString().slice(0, 10);
@@ -100,6 +125,64 @@ function normalizeUiSettings(raw: unknown) {
 	};
 }
 
+function normalizeCustomTimer(raw: unknown): PersistedCustomTimer | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const source = raw as Record<string, unknown>;
+	const id = typeof source.id === 'string' ? source.id.trim().slice(0, 120) : '';
+	if (!id) return null;
+
+	const name = typeof source.name === 'string' ? source.name.trim().slice(0, 60) : '';
+	const totalSeconds = clamp(Math.floor(Number(source.totalSeconds) || 0), 1, 216000);
+	const remainingSeconds = clamp(Math.floor(Number(source.remainingSeconds) || 0), 0, totalSeconds);
+	const warningRaw =
+		source.warningAtSeconds === null ? null : Math.floor(Number(source.warningAtSeconds) || 0);
+	const criticalRaw =
+		source.criticalAtSeconds === null ? null : Math.floor(Number(source.criticalAtSeconds) || 0);
+	const warningAtSeconds =
+		warningRaw === null ? null : clamp(warningRaw, 0, Math.max(0, totalSeconds - 1));
+	const criticalAtSeconds =
+		criticalRaw === null ? null : clamp(criticalRaw, 0, Math.max(0, totalSeconds - 1));
+	const allowedStatuses: TimerStatus[] = ['idle', 'running', 'paused', 'completed'];
+	const parsedStatus = typeof source.status === 'string' ? source.status : 'idle';
+	const status: TimerStatus = allowedStatuses.includes(parsedStatus as TimerStatus)
+		? (parsedStatus as TimerStatus)
+		: 'idle';
+
+	return {
+		id,
+		name: name || 'Timer',
+		totalSeconds,
+		remainingSeconds,
+		// Running timers cannot safely continue in background while signed out; restore as paused.
+		status: status === 'running' ? 'paused' : status,
+		warningAtSeconds,
+		criticalAtSeconds,
+		warningTriggered: Boolean(source.warningTriggered),
+		criticalTriggered: Boolean(source.criticalTriggered)
+	};
+}
+
+function normalizeCustomTimersState(raw: unknown): PersistedCustomTimersState {
+	if (!raw || typeof raw !== 'object') return DEFAULT_CUSTOM_TIMERS_STATE;
+	const source = raw as Record<string, unknown>;
+	const rawTimers = Array.isArray(source.timers) ? source.timers : [];
+	const timers = rawTimers
+		.slice(0, MAX_CUSTOM_TIMERS)
+		.map((item) => normalizeCustomTimer(item))
+		.filter((item): item is PersistedCustomTimer => Boolean(item));
+	const activeTimerId =
+		typeof source.activeTimerId === 'string' && timers.some((timer) => timer.id === source.activeTimerId)
+			? source.activeTimerId
+			: null;
+	const timerNotice = typeof source.timerNotice === 'string' ? source.timerNotice.slice(0, 240) : '';
+
+	return {
+		timers,
+		activeTimerId,
+		timerNotice
+	};
+}
+
 async function requireUserId(event: RequestEvent) {
 	const userId = event.locals.user?.id;
 	if (!userId) {
@@ -175,6 +258,13 @@ export const load: PageServerLoad = async (event) => {
 		note: note?.content ?? '',
 		sessions,
 		uiSettings: normalizeUiSettings(config.uiSettingsJson),
+		customTimersState: normalizeCustomTimersState(
+			config.uiSettingsJson &&
+				typeof config.uiSettingsJson === 'object' &&
+				'customTimersState' in config.uiSettingsJson
+				? (config.uiSettingsJson as Record<string, unknown>).customTimersState
+				: null
+		),
 		notionConfig: {
 			hasApiKey: Boolean(config.notionApiKey || env.NOTION_API_KEY),
 			tasksDbId: normalizeNotionDatabaseId(config.tasksDbId || env.NOTION_TASKS_DB_ID) || '',
@@ -255,6 +345,7 @@ export const actions: Actions = {
 		const formData = await event.request.formData();
 		const day = getString(formData, 'day') || getTodayDateString();
 		const moveUnfinished = getBoolean(formData, 'moveUnfinished');
+		const config = await getOrCreateConfig(userId);
 
 		const existingDaySession = await db.query.daySession.findFirst({
 			where: and(eq(daySession.userId, userId), eq(daySession.day, day))
@@ -264,7 +355,14 @@ export const actions: Actions = {
 		}
 
 		await db.insert(daySession).values({ userId, day, startedAt: new Date() });
-		await getOrCreateConfig(userId);
+
+		const customTimersState = normalizeCustomTimersState(
+			config.uiSettingsJson &&
+				typeof config.uiSettingsJson === 'object' &&
+				'customTimersState' in config.uiSettingsJson
+				? (config.uiSettingsJson as Record<string, unknown>).customTimersState
+				: null
+		);
 
 		await db
 			.insert(dailyNote)
@@ -276,7 +374,7 @@ export const actions: Actions = {
 
 		await db
 			.update(appConfig)
-			.set({ uiSettingsJson: DEFAULT_UI_SETTINGS })
+			.set({ uiSettingsJson: { ...DEFAULT_UI_SETTINGS, customTimersState } })
 			.where(eq(appConfig.userId, userId));
 
 		if (!moveUnfinished) {
@@ -374,6 +472,7 @@ export const actions: Actions = {
 	saveUiSettings: async (event) => {
 		const userId = await requireUserId(event);
 		const formData = await event.request.formData();
+		const config = await getOrCreateConfig(userId);
 		const settings = normalizeUiSettings({
 			themeHue: getNumber(formData, 'themeHue'),
 			workMinutes: getNumber(formData, 'workMinutes'),
@@ -381,15 +480,49 @@ export const actions: Actions = {
 			longBreakMinutes: getNumber(formData, 'longBreakMinutes'),
 			longBreakInterval: getNumber(formData, 'longBreakInterval')
 		});
+		const customTimersState = normalizeCustomTimersState(
+			config.uiSettingsJson &&
+				typeof config.uiSettingsJson === 'object' &&
+				'customTimersState' in config.uiSettingsJson
+				? (config.uiSettingsJson as Record<string, unknown>).customTimersState
+				: null
+		);
 
 		await db
 			.update(appConfig)
 			.set({
-				uiSettingsJson: settings
+				uiSettingsJson: { ...settings, customTimersState }
 			})
 			.where(eq(appConfig.userId, userId));
 
 		return { message: 'Pomodoro settings saved.' };
+	},
+
+	saveCustomTimers: async (event) => {
+		const userId = await requireUserId(event);
+		const config = await getOrCreateConfig(userId);
+		const formData = await event.request.formData();
+		const rawState = getString(formData, 'state');
+		if (!rawState) return fail(400, { message: 'Missing timers state payload.' });
+
+		let parsedState: unknown = null;
+		try {
+			parsedState = JSON.parse(rawState);
+		} catch {
+			return fail(400, { message: 'Invalid timers state payload.' });
+		}
+
+		const customTimersState = normalizeCustomTimersState(parsedState);
+		const settings = normalizeUiSettings(config.uiSettingsJson);
+
+		await db
+			.update(appConfig)
+			.set({
+				uiSettingsJson: { ...settings, customTimersState }
+			})
+			.where(eq(appConfig.userId, userId));
+
+		return { message: 'Timers state saved.' };
 	},
 
 	saveNotionConfig: async (event) => {
