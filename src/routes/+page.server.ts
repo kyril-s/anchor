@@ -22,7 +22,14 @@ const DEFAULT_UI_SETTINGS = {
 	longBreakMinutes: 25,
 	longBreakInterval: 4
 };
+const DEFAULT_TASK_POMODORO_SETTINGS = {
+	workMinutes: 25,
+	breakMinutes: 5,
+	longBreakMinutes: 25,
+	repetitionTarget: 4
+};
 const MAX_CUSTOM_TIMERS = 100;
+const MAX_TASK_POMODORO_SETTINGS = 500;
 
 type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
 type PersistedCustomTimer = {
@@ -40,6 +47,12 @@ type PersistedCustomTimersState = {
 	timers: PersistedCustomTimer[];
 	activeTimerId: string | null;
 	timerNotice: string;
+};
+type PersistedTaskPomodoroSettings = {
+	workMinutes: number;
+	breakMinutes: number;
+	longBreakMinutes: number;
+	repetitionTarget: number;
 };
 type PomodoroBlockType = 'work' | 'break' | 'longBreak';
 type PomodoroFlowType = 'free' | 'taskSession';
@@ -131,6 +144,38 @@ function normalizeUiSettings(raw: unknown) {
 	};
 }
 
+function normalizeTaskPomodoroSettings(raw: unknown): PersistedTaskPomodoroSettings | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const source = raw as Record<string, unknown>;
+	const toNumber = (key: keyof PersistedTaskPomodoroSettings, fallback: number) => {
+		const value = Number(source[key]);
+		return Number.isFinite(value) ? value : fallback;
+	};
+
+	return {
+		workMinutes: clamp(
+			Math.floor(toNumber('workMinutes', DEFAULT_TASK_POMODORO_SETTINGS.workMinutes)),
+			1,
+			120
+		),
+		breakMinutes: clamp(
+			Math.floor(toNumber('breakMinutes', DEFAULT_TASK_POMODORO_SETTINGS.breakMinutes)),
+			1,
+			60
+		),
+		longBreakMinutes: clamp(
+			Math.floor(toNumber('longBreakMinutes', DEFAULT_TASK_POMODORO_SETTINGS.longBreakMinutes)),
+			1,
+			120
+		),
+		repetitionTarget: clamp(
+			Math.floor(toNumber('repetitionTarget', DEFAULT_TASK_POMODORO_SETTINGS.repetitionTarget)),
+			1,
+			20
+		)
+	};
+}
+
 function normalizeCustomTimer(raw: unknown): PersistedCustomTimer | null {
 	if (!raw || typeof raw !== 'object') return null;
 	const source = raw as Record<string, unknown>;
@@ -187,6 +232,36 @@ function normalizeCustomTimersState(raw: unknown): PersistedCustomTimersState {
 		activeTimerId,
 		timerNotice
 	};
+}
+
+function normalizeTaskPomodoroSettingsMap(raw: unknown) {
+	if (!raw || typeof raw !== 'object') return {} as Record<string, PersistedTaskPomodoroSettings>;
+	const source = raw as Record<string, unknown>;
+	const entries = Object.entries(source).slice(0, MAX_TASK_POMODORO_SETTINGS);
+	const result: Record<string, PersistedTaskPomodoroSettings> = {};
+	for (const [taskId, value] of entries) {
+		if (!/^\d+$/.test(taskId)) continue;
+		const normalized = normalizeTaskPomodoroSettings(value);
+		if (!normalized) continue;
+		result[taskId] = normalized;
+	}
+	return result;
+}
+
+function extractCustomTimersStateFromUiSettings(raw: unknown) {
+	return normalizeCustomTimersState(
+		raw && typeof raw === 'object' && 'customTimersState' in raw
+			? (raw as Record<string, unknown>).customTimersState
+			: null
+	);
+}
+
+function extractTaskPomodoroSettingsFromUiSettings(raw: unknown) {
+	return normalizeTaskPomodoroSettingsMap(
+		raw && typeof raw === 'object' && 'taskPomodoroSettings' in raw
+			? (raw as Record<string, unknown>).taskPomodoroSettings
+			: null
+	);
 }
 
 async function requireUserId(event: RequestEvent) {
@@ -279,13 +354,8 @@ export const load: PageServerLoad = async (event) => {
 		note: note?.content ?? '',
 		sessions,
 		uiSettings: normalizeUiSettings(config.uiSettingsJson),
-		customTimersState: normalizeCustomTimersState(
-			config.uiSettingsJson &&
-				typeof config.uiSettingsJson === 'object' &&
-				'customTimersState' in config.uiSettingsJson
-				? (config.uiSettingsJson as Record<string, unknown>).customTimersState
-				: null
-		),
+		customTimersState: extractCustomTimersStateFromUiSettings(config.uiSettingsJson),
+		taskPomodoroSettings: extractTaskPomodoroSettingsFromUiSettings(config.uiSettingsJson),
 		notionConfig: {
 			hasApiKey: Boolean(config.notionApiKey || env.NOTION_API_KEY),
 			tasksDbId: normalizeNotionDatabaseId(config.tasksDbId || env.NOTION_TASKS_DB_ID) || '',
@@ -553,18 +623,13 @@ export const actions: Actions = {
 			longBreakMinutes: getNumber(formData, 'longBreakMinutes'),
 			longBreakInterval: getNumber(formData, 'longBreakInterval')
 		});
-		const customTimersState = normalizeCustomTimersState(
-			config.uiSettingsJson &&
-				typeof config.uiSettingsJson === 'object' &&
-				'customTimersState' in config.uiSettingsJson
-				? (config.uiSettingsJson as Record<string, unknown>).customTimersState
-				: null
-		);
+		const customTimersState = extractCustomTimersStateFromUiSettings(config.uiSettingsJson);
+		const taskPomodoroSettings = extractTaskPomodoroSettingsFromUiSettings(config.uiSettingsJson);
 
 		await db
 			.update(appConfig)
 			.set({
-				uiSettingsJson: { ...settings, customTimersState }
+				uiSettingsJson: { ...settings, customTimersState, taskPomodoroSettings }
 			})
 			.where(eq(appConfig.userId, userId));
 
@@ -587,15 +652,49 @@ export const actions: Actions = {
 
 		const customTimersState = normalizeCustomTimersState(parsedState);
 		const settings = normalizeUiSettings(config.uiSettingsJson);
+		const taskPomodoroSettings = extractTaskPomodoroSettingsFromUiSettings(config.uiSettingsJson);
 
 		await db
 			.update(appConfig)
 			.set({
-				uiSettingsJson: { ...settings, customTimersState }
+				uiSettingsJson: { ...settings, customTimersState, taskPomodoroSettings }
 			})
 			.where(eq(appConfig.userId, userId));
 
 		return { message: 'Timers state saved.' };
+	},
+
+	saveTaskPomodoroSettings: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
+		const taskId = getNumber(formData, 'taskId');
+		if (!Number.isInteger(taskId) || taskId <= 0) return fail(400, { message: 'Invalid task id.' });
+
+		const task = await db.query.dailyTask.findFirst({
+			where: and(eq(dailyTask.id, taskId), eq(dailyTask.userId, userId)),
+			columns: { id: true }
+		});
+		if (!task) return fail(404, { message: 'Task not found.' });
+
+		const config = await getOrCreateConfig(userId);
+		const settings = normalizeUiSettings(config.uiSettingsJson);
+		const customTimersState = extractCustomTimersStateFromUiSettings(config.uiSettingsJson);
+		const taskPomodoroSettings = extractTaskPomodoroSettingsFromUiSettings(config.uiSettingsJson);
+		taskPomodoroSettings[String(taskId)] = normalizeTaskPomodoroSettings({
+			workMinutes: getNumber(formData, 'workMinutes'),
+			breakMinutes: getNumber(formData, 'breakMinutes'),
+			longBreakMinutes: getNumber(formData, 'longBreakMinutes'),
+			repetitionTarget: getNumber(formData, 'repetitionTarget')
+		}) ?? { ...DEFAULT_TASK_POMODORO_SETTINGS };
+
+		await db
+			.update(appConfig)
+			.set({
+				uiSettingsJson: { ...settings, customTimersState, taskPomodoroSettings }
+			})
+			.where(eq(appConfig.userId, userId));
+
+		return { message: 'Task Pomodoro settings saved.' };
 	},
 
 	saveNotionConfig: async (event) => {

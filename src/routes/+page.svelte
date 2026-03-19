@@ -10,7 +10,7 @@
 	type PomodoroFlow = 'free' | 'taskSession';
 	type MainTab = 'my-day' | 'timers';
 	type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
-	type SettingsTab = 'preferences' | 'pomodoro' | 'notion';
+	type SettingsTab = 'pomodoro' | 'notion' | 'preferences';
 	type TimersWarningLevel = 'none' | 'warning' | 'critical' | 'completed';
 	type CustomTimer = {
 		id: string;
@@ -28,12 +28,19 @@
 		activeTimerId: string | null;
 		timerNotice: string;
 	};
+	type TaskPomodoroSettings = {
+		workMinutes: number;
+		breakMinutes: number;
+		longBreakMinutes: number;
+		repetitionTarget: number;
+	};
 	const DEFAULT_MAIN_TAB: MainTab = 'my-day';
 	const DEFAULT_THEME_HUE = 330.216;
 	const DEFAULT_WORK_MINUTES = 25;
 	const DEFAULT_BREAK_MINUTES = 5;
 	const DEFAULT_LONG_BREAK_MINUTES = 25;
 	const DEFAULT_LONG_BREAK_INTERVAL = 4;
+	const DEFAULT_REPETITION_TARGET = 4;
 	const UI_SETTINGS_SAVE_DEBOUNCE_MS = 400;
 	const NOTION_SETTINGS_SAVE_DEBOUNCE_MS = 500;
 	const CUSTOM_TIMERS_SAVE_DEBOUNCE_MS = 600;
@@ -59,13 +66,35 @@
 	let pomodoroNotice = $state('');
 	let activeTab = $state<MainTab>(getInitialMainTab());
 	let settingsOpen = $state(false);
-	let settingsTab = $state<SettingsTab>('preferences');
+	let settingsTab = $state<SettingsTab>('pomodoro');
 	let startDayPromptOpen = $state(false);
 	let finishDayPromptOpen = $state(false);
+	let taskSettingsOpen = $state(false);
+	let taskSettingsTaskId = $state<number | null>(null);
+	let taskSettingsTaskTitle = $state('');
+	let taskSettingsWorkMinutes = $state(DEFAULT_WORK_MINUTES);
+	let taskSettingsBreakMinutes = $state(DEFAULT_BREAK_MINUTES);
+	let taskSettingsLongBreakMinutes = $state(DEFAULT_LONG_BREAK_MINUTES);
+	let taskSettingsRepetitionTarget = $state(DEFAULT_REPETITION_TARGET);
+	let taskSettingsNotice = $state('');
 
 	const workSeconds = $derived(workMinutes * 60);
 	const breakSeconds = $derived(breakMinutes * 60);
 	const longBreakSeconds = $derived(longBreakMinutes * 60);
+	const taskPomodoroSettingsInput = untrack(
+		() => data.taskPomodoroSettings as Record<string, TaskPomodoroSettings> | undefined
+	);
+	let taskPomodoroSettingsByTaskId = $state<Record<number, TaskPomodoroSettings>>(
+		Object.fromEntries(
+			Object.entries(taskPomodoroSettingsInput ?? {})
+				.map(([taskId, settings]) => {
+					const parsedTaskId = Number(taskId);
+					if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) return null;
+					return [parsedTaskId, normalizeTaskPomodoroSettings(settings)] as const;
+				})
+				.filter((entry): entry is readonly [number, TaskPomodoroSettings] => Boolean(entry))
+		)
+	);
 	let completedWorkSessions = $state(0);
 
 	let currentMode = $state<Mode>('work');
@@ -98,6 +127,38 @@
 
 	function clamp(value: number, min: number, max: number) {
 		return Math.max(min, Math.min(max, value));
+	}
+
+	function normalizeTaskPomodoroSettings(
+		value: Partial<TaskPomodoroSettings> | null | undefined
+	): TaskPomodoroSettings {
+		return {
+			workMinutes: clamp(Math.floor(value?.workMinutes ?? DEFAULT_WORK_MINUTES), 1, 120),
+			breakMinutes: clamp(Math.floor(value?.breakMinutes ?? DEFAULT_BREAK_MINUTES), 1, 60),
+			longBreakMinutes: clamp(
+				Math.floor(value?.longBreakMinutes ?? DEFAULT_LONG_BREAK_MINUTES),
+				1,
+				120
+			),
+			repetitionTarget: clamp(
+				Math.floor(value?.repetitionTarget ?? DEFAULT_REPETITION_TARGET),
+				1,
+				20
+			)
+		};
+	}
+
+	function createDefaultTaskPomodoroSettings() {
+		return normalizeTaskPomodoroSettings({
+			workMinutes,
+			breakMinutes,
+			longBreakMinutes,
+			repetitionTarget: DEFAULT_REPETITION_TARGET
+		});
+	}
+
+	function getTaskPomodoroSettings(taskId: number) {
+		return taskPomodoroSettingsByTaskId[taskId] ?? createDefaultTaskPomodoroSettings();
 	}
 
 	function parseMainTab(value: string | null) {
@@ -183,7 +244,18 @@
 		applyColors(isDark);
 	}
 
+	function activeTaskSettings() {
+		if (pomodoroFlow !== 'taskSession' || activeSessionTaskId === null) return null;
+		return getTaskPomodoroSettings(activeSessionTaskId);
+	}
+
 	function secondsForMode(mode: Mode) {
+		const taskSettings = activeTaskSettings();
+		if (taskSettings) {
+			if (mode === 'work') return taskSettings.workMinutes * 60;
+			if (mode === 'longBreak') return taskSettings.longBreakMinutes * 60;
+			return taskSettings.breakMinutes * 60;
+		}
 		if (mode === 'work') return workSeconds;
 		if (mode === 'longBreak') return longBreakSeconds;
 		return breakSeconds;
@@ -620,19 +692,20 @@
 	}
 
 	function beginTaskSession(taskId: number, title: string) {
+		const settings = getTaskPomodoroSettings(taskId);
 		stopInterval();
 		timerStatus = 'idle';
-		currentMode = 'work';
-		timeRemaining = workSeconds;
-		clearSessionDraft();
-		completedWorkSessions = 0;
-
 		pomodoroFlow = 'taskSession';
 		activeSessionTaskId = taskId;
 		activeSessionTaskTitle = title;
 		sessionGroupId = createSessionGroupId();
+		repetitionTarget = settings.repetitionTarget;
 		currentRepetition = 0;
 		pomodoroNotice = '';
+		currentMode = 'work';
+		timeRemaining = secondsForMode('work');
+		clearSessionDraft();
+		completedWorkSessions = 0;
 	}
 
 	function cancelTaskSession() {
@@ -659,6 +732,70 @@
 		switchSessionPromptOpen = false;
 		pendingSwitchTaskId = null;
 		pendingSwitchTaskTitle = '';
+	}
+
+	function openTaskSettings(taskId: number, taskTitle: string) {
+		const settings = getTaskPomodoroSettings(taskId);
+		taskSettingsTaskId = taskId;
+		taskSettingsTaskTitle = taskTitle;
+		taskSettingsWorkMinutes = settings.workMinutes;
+		taskSettingsBreakMinutes = settings.breakMinutes;
+		taskSettingsLongBreakMinutes = settings.longBreakMinutes;
+		taskSettingsRepetitionTarget = settings.repetitionTarget;
+		taskSettingsNotice = '';
+		taskSettingsOpen = true;
+	}
+
+	function closeTaskSettings() {
+		taskSettingsOpen = false;
+		taskSettingsTaskId = null;
+		taskSettingsTaskTitle = '';
+		taskSettingsNotice = '';
+	}
+
+	function applyTaskSettingsDraft() {
+		return normalizeTaskPomodoroSettings({
+			workMinutes: taskSettingsWorkMinutes,
+			breakMinutes: taskSettingsBreakMinutes,
+			longBreakMinutes: taskSettingsLongBreakMinutes,
+			repetitionTarget: taskSettingsRepetitionTarget
+		});
+	}
+
+	async function saveTaskSettings() {
+		if (taskSettingsTaskId === null) return;
+		const normalized = applyTaskSettingsDraft();
+		taskSettingsWorkMinutes = normalized.workMinutes;
+		taskSettingsBreakMinutes = normalized.breakMinutes;
+		taskSettingsLongBreakMinutes = normalized.longBreakMinutes;
+		taskSettingsRepetitionTarget = normalized.repetitionTarget;
+		taskPomodoroSettingsByTaskId = {
+			...taskPomodoroSettingsByTaskId,
+			[taskSettingsTaskId]: normalized
+		};
+		if (activeSessionTaskId === taskSettingsTaskId) {
+			repetitionTarget = normalized.repetitionTarget;
+			if (timerStatus === 'idle') {
+				timeRemaining = secondsForMode(currentMode);
+			}
+		}
+
+		const formData = new FormData();
+		formData.set('taskId', String(taskSettingsTaskId));
+		formData.set('workMinutes', String(normalized.workMinutes));
+		formData.set('breakMinutes', String(normalized.breakMinutes));
+		formData.set('longBreakMinutes', String(normalized.longBreakMinutes));
+		formData.set('repetitionTarget', String(normalized.repetitionTarget));
+		try {
+			const response = await fetch('?/saveTaskPomodoroSettings', { method: 'POST', body: formData });
+			if (!response.ok) {
+				taskSettingsNotice = 'Could not save task settings.';
+				return;
+			}
+			taskSettingsNotice = 'Task settings saved.';
+		} catch {
+			taskSettingsNotice = 'Could not save task settings.';
+		}
 	}
 
 	function confirmSwitchSessionTask() {
@@ -776,7 +913,7 @@
 		stopInterval();
 		timerStatus = 'idle';
 		currentMode = 'work';
-		timeRemaining = workSeconds;
+		timeRemaining = secondsForMode('work');
 		clearSessionDraft();
 		completedWorkSessions = 0;
 		pomodoroNotice = '';
@@ -891,7 +1028,7 @@ function queueNotionSettingsSave(event: Event) {
 	}
 
 	function openSettings() {
-		settingsTab = 'preferences';
+		settingsTab = 'pomodoro';
 		settingsOpen = true;
 	}
 
@@ -928,6 +1065,7 @@ function queueNotionSettingsSave(event: Event) {
 		timeRemaining = DEFAULT_WORK_MINUTES * 60;
 		clearSessionDraft();
 		completedWorkSessions = 0;
+		taskPomodoroSettingsByTaskId = {};
 		clearTaskSessionState();
 	}
 
@@ -1038,6 +1176,10 @@ function queueNotionSettingsSave(event: Event) {
 
 	$effect(() => {
 		if (activeSessionTaskId === null) return;
+		repetitionTarget = getTaskPomodoroSettings(activeSessionTaskId).repetitionTarget;
+		if (timerStatus === 'idle') {
+			timeRemaining = secondsForMode(currentMode);
+		}
 		const task = data.tasks.find((item) => item.id === activeSessionTaskId);
 		if (!task) {
 			cancelTaskSession();
@@ -1221,6 +1363,42 @@ function queueNotionSettingsSave(event: Event) {
 	</Modal>
 
 	<Modal
+		open={taskSettingsOpen}
+		title={taskSettingsTaskTitle ? `${taskSettingsTaskTitle} settings` : 'Task settings'}
+		compact
+		onClose={closeTaskSettings}
+	>
+		<section class="task-settings-panel">
+			<h3>Task Pomodoro settings</h3>
+			<div class="settings-grid">
+				<label>
+					Work (min)
+					<input type="number" min="1" max="120" bind:value={taskSettingsWorkMinutes} />
+				</label>
+				<label>
+					Break (min)
+					<input type="number" min="1" max="60" bind:value={taskSettingsBreakMinutes} />
+				</label>
+				<label>
+					Long Break (min)
+					<input type="number" min="1" max="120" bind:value={taskSettingsLongBreakMinutes} />
+				</label>
+				<label>
+					Repetition target
+					<input type="number" min="1" max="20" bind:value={taskSettingsRepetitionTarget} />
+				</label>
+			</div>
+			<div class="row timer-actions">
+				<button type="button" class="btn" onclick={closeTaskSettings}>Close</button>
+				<button type="button" class="btn btn-primary" onclick={saveTaskSettings}>Save</button>
+			</div>
+			{#if taskSettingsNotice}
+				<p class="pomodoro-notice">{taskSettingsNotice}</p>
+			{/if}
+		</section>
+	</Modal>
+
+	<Modal
 		open={switchSessionPromptOpen}
 		title="Switch task session"
 		compact
@@ -1252,11 +1430,34 @@ function queueNotionSettingsSave(event: Event) {
 							{/if}
 						</div>
 						{#if pomodoroFlow === 'taskSession'}
-							<button class="task-icon-btn task-icon-btn-critical pomodoro-close-btn" type="button" onclick={cancelTaskSession} title="Cancel task session">
-								<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="m18 6-12 12M6 6l12 12" />
-								</svg>
-							</button>
+							<div class="pomodoro-header-actions">
+								<button
+									class="task-icon-btn"
+									type="button"
+									aria-label={`Open Pomodoro settings for ${activeSessionTaskTitle}`}
+									title="Task Pomodoro settings"
+									onclick={() =>
+										activeSessionTaskId !== null &&
+										openTaskSettings(activeSessionTaskId, activeSessionTaskTitle)}
+								>
+									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+										<line x1="4" y1="21" x2="4" y2="14" />
+										<line x1="4" y1="10" x2="4" y2="3" />
+										<line x1="12" y1="21" x2="12" y2="12" />
+										<line x1="12" y1="8" x2="12" y2="3" />
+										<line x1="20" y1="21" x2="20" y2="16" />
+										<line x1="20" y1="12" x2="20" y2="3" />
+										<line x1="1" y1="14" x2="7" y2="14" />
+										<line x1="9" y1="8" x2="15" y2="8" />
+										<line x1="17" y1="16" x2="23" y2="16" />
+									</svg>
+								</button>
+								<button class="task-icon-btn task-icon-btn-critical pomodoro-close-btn" type="button" onclick={cancelTaskSession} title="Cancel task session">
+									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="m18 6-12 12M6 6l12 12" />
+									</svg>
+								</button>
+							</div>
 						{/if}
 					</div>
 					<div class="mode-toggle-wrap" role="group" aria-label="Pomodoro modes">
@@ -1292,12 +1493,7 @@ function queueNotionSettingsSave(event: Event) {
 
 				{#if pomodoroFlow === 'taskSession'}
 					<div class="pomodoro-session-panel" transition:slide={{ duration: 220 }}>
-						<div class="pomodoro-session-controls">
-							<label>
-								Repetitions target
-								<input type="number" min="1" max="20" bind:value={repetitionTarget} />
-							</label>
-						</div>
+						<div class="pomodoro-session-controls">Target: {repetitionTarget} cycles</div>
 
 						{#if pomodoroNotice}
 							<p class="pomodoro-notice">{pomodoroNotice}</p>
@@ -1550,14 +1746,6 @@ function queueNotionSettingsSave(event: Event) {
 				<button
 					type="button"
 					class="settings-tab"
-					class:active={settingsTab === 'preferences'}
-					onclick={() => (settingsTab = 'preferences')}
-				>
-					Preferences
-				</button>
-				<button
-					type="button"
-					class="settings-tab"
 					class:active={settingsTab === 'pomodoro'}
 					onclick={() => (settingsTab = 'pomodoro')}
 				>
@@ -1570,6 +1758,14 @@ function queueNotionSettingsSave(event: Event) {
 					onclick={() => (settingsTab = 'notion')}
 				>
 					Notion
+				</button>
+				<button
+					type="button"
+					class="settings-tab"
+					class:active={settingsTab === 'preferences'}
+					onclick={() => (settingsTab = 'preferences')}
+				>
+					Preferences
 				</button>
 			</nav>
 
@@ -1590,7 +1786,7 @@ function queueNotionSettingsSave(event: Event) {
 						</label>
 					</div>
 				{:else if settingsTab === 'pomodoro'}
-					<h3>Pomodoro Customization</h3>
+					<h3>Free Pomodoro Customization</h3>
 					<div class="shortcut-wrap">
 						<div class="shortcut-row">
 							<span>Work</span>
@@ -2226,6 +2422,12 @@ function queueNotionSettingsSave(event: Event) {
 		min-height: 0;
 	}
 
+	.task-settings-panel {
+		display: grid;
+		gap: var(--app-space-md);
+		min-width: min(30rem, calc(100vw - 5rem));
+	}
+
 	.start-day-prompt {
 		display: grid;
 		gap: var(--app-space-sm);
@@ -2294,8 +2496,14 @@ function queueNotionSettingsSave(event: Event) {
 		width: 100%;
 	}
 
+	.pomodoro-header-actions {
+		display: inline-flex;
+		gap: var(--app-space-xs);
+		align-items: center;
+	}
+
 	.pomodoro-close-btn {
-		margin-left: auto;
+		margin-left: 0;
 	}
 
 	.pomodoro-heading-wrap {
@@ -2427,12 +2635,6 @@ function queueNotionSettingsSave(event: Event) {
 	.pomodoro-session-controls {
 		display: grid;
 		gap: var(--app-space-sm);
-	}
-
-	.pomodoro-session-controls input[type='number'] {
-		height: var(--app-control-height-base);
-		padding-top: 0;
-		padding-bottom: 0;
 	}
 
 	.pomodoro-notice {
