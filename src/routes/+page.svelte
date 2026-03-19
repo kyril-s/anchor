@@ -26,6 +26,7 @@
 		activeTimerId: string | null;
 		timerNotice: string;
 	};
+	const DEFAULT_MAIN_TAB: MainTab = 'my-day';
 	const DEFAULT_THEME_HUE = 330.216;
 	const DEFAULT_WORK_MINUTES = 25;
 	const DEFAULT_BREAK_MINUTES = 5;
@@ -45,7 +46,7 @@
 	let longBreakMinutes = $state(uiSettings.longBreakMinutes);
 	let longBreakInterval = $state(uiSettings.longBreakInterval);
 	let selectedTaskId = $state(untrack(() => data.tasks[0]?.id?.toString() ?? ''));
-	let activeTab = $state<MainTab>('my-day');
+	let activeTab = $state<MainTab>(getInitialMainTab());
 	let settingsOpen = $state(false);
 let settingsTab = $state<SettingsTab>('preferences');
 	let startDayPromptOpen = $state(false);
@@ -88,6 +89,35 @@ let settingsTab = $state<SettingsTab>('preferences');
 
 	function clamp(value: number, min: number, max: number) {
 		return Math.max(min, Math.min(max, value));
+	}
+
+	function parseMainTab(value: string | null) {
+		return value === 'my-day' || value === 'timers' ? value : null;
+	}
+
+	function readMainTabFromLocation() {
+		if (typeof window === 'undefined') return DEFAULT_MAIN_TAB;
+		const params = new URLSearchParams(window.location.search);
+		return parseMainTab(params.get('tab')) ?? DEFAULT_MAIN_TAB;
+	}
+
+	function getInitialMainTab() {
+		return readMainTabFromLocation();
+	}
+
+	function writeMainTabToUrl(tab: MainTab) {
+		if (typeof window === 'undefined') return;
+		const url = new URL(window.location.href);
+		url.searchParams.set('tab', tab);
+		const nextPath = `${url.pathname}${url.search}${url.hash}`;
+		const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+		if (nextPath === currentPath) return;
+		window.history.replaceState(window.history.state, '', nextPath);
+	}
+
+	function setActiveTab(tab: MainTab) {
+		activeTab = tab;
+		writeMainTabToUrl(tab);
 	}
 
 	function hsl(h: number, s: number, l: number) {
@@ -844,6 +874,14 @@ function queueNotionSettingsSave(event: Event) {
 	});
 
 	$effect(() => {
+		const onPopstate = () => {
+			activeTab = readMainTabFromLocation();
+		};
+		window.addEventListener('popstate', onPopstate);
+		return () => window.removeEventListener('popstate', onPopstate);
+	});
+
+	$effect(() => {
 		if (!form?.message) return;
 		if (!form.message.startsWith('Day started')) return;
 		closeStartDayPrompt();
@@ -895,7 +933,7 @@ function queueNotionSettingsSave(event: Event) {
 					aria-selected={activeTab === 'my-day'}
 					aria-controls="panel-my-day"
 					type="button"
-					onclick={() => (activeTab = 'my-day')}
+					onclick={() => setActiveTab('my-day')}
 				>
 					My day
 				</button>
@@ -906,7 +944,7 @@ function queueNotionSettingsSave(event: Event) {
 					aria-selected={activeTab === 'timers'}
 					aria-controls="panel-timers"
 					type="button"
-					onclick={() => (activeTab = 'timers')}
+					onclick={() => setActiveTab('timers')}
 				>
 					Timers
 				</button>
