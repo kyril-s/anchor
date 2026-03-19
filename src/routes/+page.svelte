@@ -8,14 +8,26 @@
 	type Mode = 'work' | 'break' | 'longBreak';
 	type MainTab = 'my-day' | 'timers';
 	type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
-type SettingsTab = 'preferences' | 'pomodoro' | 'notion';
+	type SettingsTab = 'preferences' | 'pomodoro' | 'notion';
+	type TimersWarningLevel = 'none' | 'warning' | 'critical' | 'completed';
+	type CustomTimer = {
+		id: string;
+		name: string;
+		totalSeconds: number;
+		remainingSeconds: number;
+		status: TimerStatus;
+		warningAtSeconds: number | null;
+		criticalAtSeconds: number | null;
+		warningTriggered: boolean;
+		criticalTriggered: boolean;
+	};
 	const DEFAULT_THEME_HUE = 330.216;
 	const DEFAULT_WORK_MINUTES = 25;
 	const DEFAULT_BREAK_MINUTES = 5;
 	const DEFAULT_LONG_BREAK_MINUTES = 25;
 	const DEFAULT_LONG_BREAK_INTERVAL = 4;
 	const UI_SETTINGS_SAVE_DEBOUNCE_MS = 400;
-const NOTION_SETTINGS_SAVE_DEBOUNCE_MS = 500;
+	const NOTION_SETTINGS_SAVE_DEBOUNCE_MS = 500;
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const uiSettings = untrack(() => data.uiSettings);
@@ -42,7 +54,20 @@ let settingsTab = $state<SettingsTab>('preferences');
 	let timerStatus = $state<TimerStatus>('idle');
 	let timerHandle: ReturnType<typeof setInterval> | null = null;
 	let uiSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
-let notionSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
+	let notionSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
+	let customTimerHandle: ReturnType<typeof setInterval> | null = null;
+
+	let timerDraftName = $state('');
+	let timerDraftDurationMinutes = $state(25);
+	let timerDraftWarningMinutes = $state(5);
+	let timerDraftCriticalMinutes = $state(1);
+	let customTimers = $state<CustomTimer[]>([]);
+	let activeCustomTimerId = $state<string | null>(null);
+	let timerNotice = $state('');
+	let customTimerCounter = 0;
+	let draggedTimerId = $state<string | null>(null);
+	let dragOverTimerId = $state<string | null>(null);
+	let dragDropPosition = $state<'before' | 'after' | null>(null);
 
 	let sessionStartedAt = $state('');
 	let sessionEndedAt = $state('');
@@ -145,11 +170,327 @@ let notionSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
 		uiSettingsSaveHandle = null;
 	}
 
-function clearNotionSettingsSaveHandle() {
-	if (!notionSettingsSaveHandle) return;
-	clearTimeout(notionSettingsSaveHandle);
-	notionSettingsSaveHandle = null;
-}
+	function clearNotionSettingsSaveHandle() {
+		if (!notionSettingsSaveHandle) return;
+		clearTimeout(notionSettingsSaveHandle);
+		notionSettingsSaveHandle = null;
+	}
+
+	function stopCustomTimerInterval() {
+		if (!customTimerHandle) return;
+		clearInterval(customTimerHandle);
+		customTimerHandle = null;
+	}
+
+	function normalizeTimerName(value: string) {
+		const trimmed = value.trim();
+		if (trimmed) return trimmed;
+		return `Timer ${customTimers.length + 1}`;
+	}
+
+	function getCustomTimer(id: string) {
+		return customTimers.find((timer) => timer.id === id) ?? null;
+	}
+
+	function toWholeMinutes(value: number, fallback: number, min: number, max: number) {
+		const safe = Number.isFinite(value) ? Math.floor(value) : fallback;
+		return clamp(safe, min, max);
+	}
+
+	function normalizeTimerDraftValues() {
+		timerDraftDurationMinutes = toWholeMinutes(timerDraftDurationMinutes, 25, 1, 600);
+		timerDraftWarningMinutes = toWholeMinutes(
+			timerDraftWarningMinutes,
+			5,
+			0,
+			timerDraftDurationMinutes - 1
+		);
+		timerDraftCriticalMinutes = toWholeMinutes(
+			timerDraftCriticalMinutes,
+			1,
+			0,
+			timerDraftDurationMinutes - 1
+		);
+	}
+
+	function createCustomTimer() {
+		normalizeTimerDraftValues();
+		const durationMinutes = timerDraftDurationMinutes;
+		const warningMinutes = Math.min(timerDraftWarningMinutes, durationMinutes - 1);
+		const criticalMinutes = Math.min(timerDraftCriticalMinutes, durationMinutes - 1);
+		const id = `timer-${Date.now()}-${customTimerCounter++}`;
+		const totalSeconds = durationMinutes * 60;
+
+		const nextTimer: CustomTimer = {
+			id,
+			name: normalizeTimerName(timerDraftName),
+			totalSeconds,
+			remainingSeconds: totalSeconds,
+			status: 'idle',
+			warningAtSeconds: warningMinutes > 0 ? warningMinutes * 60 : null,
+			criticalAtSeconds: criticalMinutes > 0 ? criticalMinutes * 60 : null,
+			warningTriggered: false,
+			criticalTriggered: false
+		};
+
+		customTimers = [nextTimer, ...customTimers];
+		timerDraftName = '';
+		timerNotice = '';
+	}
+
+	function pauseAllCustomTimers() {
+		customTimers = customTimers.map((timer) => {
+			if (timer.status !== 'running') return timer;
+			return { ...timer, status: 'paused' };
+		});
+	}
+
+	function getCustomTimerWarningLevel(timer: CustomTimer): TimersWarningLevel {
+		if (timer.status === 'completed') return 'completed';
+		if (timer.criticalTriggered) return 'critical';
+		if (timer.warningTriggered) return 'warning';
+		return 'none';
+	}
+
+	function getCustomTimerWarningMessage(timer: CustomTimer) {
+		const level = getCustomTimerWarningLevel(timer);
+		if (level === 'critical') return 'Critical window';
+		if (level === 'warning') return 'Warning window';
+		if (level === 'completed') return 'Completed';
+		return 'Normal';
+	}
+
+	function resetWarningState(timer: CustomTimer) {
+		return {
+			...timer,
+			warningTriggered: false,
+			criticalTriggered: false
+		};
+	}
+
+	function runCustomTimer(id: string) {
+		const timer = getCustomTimer(id);
+		if (!timer) return;
+
+		stopCustomTimerInterval();
+		pauseAllCustomTimers();
+		activeCustomTimerId = id;
+		timerNotice = '';
+
+		customTimers = customTimers.map((item) => {
+			if (item.id !== id) return item;
+			if (item.status === 'completed' || item.remainingSeconds <= 0) {
+				const resetItem = resetWarningState({ ...item, remainingSeconds: item.totalSeconds });
+				return { ...resetItem, status: 'running' };
+			}
+			return { ...item, status: 'running' };
+		});
+
+		customTimerHandle = setInterval(tickCustomTimer, 1000);
+	}
+
+	function pauseCustomTimer(id: string) {
+		const timer = getCustomTimer(id);
+		if (!timer || timer.status !== 'running') return;
+		stopCustomTimerInterval();
+		customTimers = customTimers.map((item) =>
+			item.id === id ? { ...item, status: 'paused' } : item
+		);
+		if (activeCustomTimerId === id) activeCustomTimerId = null;
+	}
+
+	function toggleCustomTimer(id: string) {
+		const timer = getCustomTimer(id);
+		if (!timer) return;
+		if (timer.status === 'running') {
+			pauseCustomTimer(id);
+			return;
+		}
+		runCustomTimer(id);
+	}
+
+	function resetCustomTimer(id: string) {
+		const timer = getCustomTimer(id);
+		if (!timer) return;
+		if (activeCustomTimerId === id) {
+			stopCustomTimerInterval();
+			activeCustomTimerId = null;
+		}
+		customTimers = customTimers.map((item) => {
+			if (item.id !== id) return item;
+			const resetItem = resetWarningState(item);
+			return {
+				...resetItem,
+				remainingSeconds: item.totalSeconds,
+				status: 'idle'
+			};
+		});
+		timerNotice = '';
+	}
+
+	function removeCustomTimer(id: string) {
+		if (activeCustomTimerId === id) {
+			stopCustomTimerInterval();
+			activeCustomTimerId = null;
+		}
+		customTimers = customTimers.filter((item) => item.id !== id);
+		timerNotice = '';
+	}
+
+	function clearTimerDragState() {
+		draggedTimerId = null;
+		dragOverTimerId = null;
+		dragDropPosition = null;
+	}
+
+	function getDragDropPosition(event: DragEvent): 'before' | 'after' {
+		const target = event.currentTarget;
+		if (!(target instanceof HTMLElement)) return 'after';
+		const { top, height } = target.getBoundingClientRect();
+		const offsetY = event.clientY - top;
+		return offsetY < height / 2 ? 'before' : 'after';
+	}
+
+	function reorderCustomTimers(draggedId: string, targetId: string, position: 'before' | 'after') {
+		const fromIndex = customTimers.findIndex((timer) => timer.id === draggedId);
+		const targetIndex = customTimers.findIndex((timer) => timer.id === targetId);
+		if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) return;
+
+		const next = [...customTimers];
+		const [moved] = next.splice(fromIndex, 1);
+		let insertIndex = targetIndex + (position === 'after' ? 1 : 0);
+		if (fromIndex < insertIndex) insertIndex -= 1;
+		next.splice(insertIndex, 0, moved);
+		customTimers = next;
+	}
+
+	function commitTimerDrop() {
+		if (!draggedTimerId || !dragOverTimerId || !dragDropPosition) {
+			clearTimerDragState();
+			return;
+		}
+		reorderCustomTimers(draggedTimerId, dragOverTimerId, dragDropPosition);
+		clearTimerDragState();
+	}
+
+	function onTimerDragStart(event: DragEvent, timerId: string) {
+		const target = event.target;
+		// Allow drag from most of the card, but keep action buttons clickable.
+		if (target instanceof HTMLElement && target.closest('.timers-item-actions')) {
+			event.preventDefault();
+			return;
+		}
+
+		draggedTimerId = timerId;
+		dragOverTimerId = null;
+		dragDropPosition = null;
+
+		if (!event.dataTransfer) return;
+		event.dataTransfer.effectAllowed = 'move';
+		event.dataTransfer.setData('text/plain', timerId);
+	}
+
+	function onTimerDragOver(event: DragEvent, timerId: string) {
+		if (!draggedTimerId || draggedTimerId === timerId) return;
+		event.preventDefault();
+		dragOverTimerId = timerId;
+		dragDropPosition = getDragDropPosition(event);
+	}
+
+	function onTimerDrop(event: DragEvent, timerId: string) {
+		event.preventDefault();
+		if (!draggedTimerId || draggedTimerId === timerId) {
+			clearTimerDragState();
+			return;
+		}
+		dragOverTimerId = timerId;
+		dragDropPosition = getDragDropPosition(event);
+		commitTimerDrop();
+	}
+
+	function onTimerDragEnd() {
+		clearTimerDragState();
+	}
+
+	function onTimersListDragOver(event: DragEvent) {
+		if (!draggedTimerId) return;
+		event.preventDefault();
+		const target = event.target;
+		if (target instanceof HTMLElement && target.closest('.timers-item')) return;
+		const lastTimer = customTimers.at(-1);
+		if (!lastTimer || lastTimer.id === draggedTimerId) return;
+		dragOverTimerId = lastTimer.id;
+		dragDropPosition = 'after';
+	}
+
+	function onTimersListDrop(event: DragEvent) {
+		if (!draggedTimerId) return;
+		event.preventDefault();
+		commitTimerDrop();
+	}
+
+	function tickCustomTimer() {
+		if (!activeCustomTimerId) {
+			stopCustomTimerInterval();
+			return;
+		}
+
+		let completedTimerName = '';
+		let warningNotice = '';
+		let hasRunningTimer = false;
+		const activeId = activeCustomTimerId;
+
+		customTimers = customTimers.map((timer) => {
+			if (timer.id !== activeId || timer.status !== 'running') return timer;
+			hasRunningTimer = true;
+			const nextRemaining = Math.max(0, timer.remainingSeconds - 1);
+			let nextTimer = { ...timer, remainingSeconds: nextRemaining };
+
+			if (
+				nextTimer.criticalAtSeconds !== null &&
+				!nextTimer.criticalTriggered &&
+				nextRemaining <= nextTimer.criticalAtSeconds
+			) {
+				nextTimer = { ...nextTimer, criticalTriggered: true, warningTriggered: true };
+				warningNotice = `${nextTimer.name}: critical threshold reached.`;
+			} else if (
+				nextTimer.warningAtSeconds !== null &&
+				!nextTimer.warningTriggered &&
+				nextRemaining <= nextTimer.warningAtSeconds
+			) {
+				nextTimer = { ...nextTimer, warningTriggered: true };
+				warningNotice = `${nextTimer.name}: warning threshold reached.`;
+			}
+
+			if (nextRemaining === 0) {
+				completedTimerName = nextTimer.name;
+				nextTimer = { ...nextTimer, status: 'completed', warningTriggered: true, criticalTriggered: true };
+			}
+
+			return nextTimer;
+		});
+
+		if (!hasRunningTimer) {
+			stopCustomTimerInterval();
+			activeCustomTimerId = null;
+			return;
+		}
+
+		if (completedTimerName) {
+			stopCustomTimerInterval();
+			activeCustomTimerId = null;
+			timerNotice = `${completedTimerName} finished.`;
+			return;
+		}
+
+		if (warningNotice) {
+			timerNotice = warningNotice;
+		}
+	}
+
+	const activeCustomTimer = $derived(
+		activeCustomTimerId ? (customTimers.find((timer) => timer.id === activeCustomTimerId) ?? null) : null
+	);
 
 	function clearSessionDraft() {
 		sessionStartedAt = '';
@@ -479,7 +820,8 @@ function queueNotionSettingsSave(event: Event) {
 	onDestroy(() => {
 		stopInterval();
 		clearUiSettingsSaveHandle();
-	clearNotionSettingsSaveHandle();
+		clearNotionSettingsSaveHandle();
+		stopCustomTimerInterval();
 	});
 </script>
 
@@ -771,8 +1113,111 @@ function queueNotionSettingsSave(event: Event) {
 		</div>
 	{:else}
 		<div class="card timers-panel" id="panel-timers" role="tabpanel" aria-label="Timers">
-			<h2>Timers</h2>
-			<p>Empty for now (v2).</p>
+			<div class="section-heading">
+				<h2>Timers</h2>
+				<p class="timers-summary">{customTimers.length} total</p>
+			</div>
+
+			<div class="timers-grid">
+				<section class="timers-subcard">
+					<h3>Create timer</h3>
+					<div class="timers-form-grid">
+						<label>
+							Name
+							<input
+								type="text"
+								bind:value={timerDraftName}
+								placeholder="Design sprint, Deep work..."
+								maxlength="60"
+							/>
+						</label>
+						<label>
+							Duration (minutes)
+							<input type="number" min="1" max="600" bind:value={timerDraftDurationMinutes} />
+						</label>
+						<label>
+							Warning at (minutes left)
+							<input type="number" min="0" max="599" bind:value={timerDraftWarningMinutes} />
+						</label>
+						<label>
+							Critical at (minutes left)
+							<input type="number" min="0" max="599" bind:value={timerDraftCriticalMinutes} />
+						</label>
+					</div>
+					<button class="btn btn-primary" type="button" onclick={createCustomTimer}>Add timer</button>
+				</section>
+
+				<section class="timers-subcard timers-active-card">
+					<h3>Remaining time</h3>
+					{#if activeCustomTimer}
+						<p class="timers-active-name">{activeCustomTimer.name}</p>
+						<p class="clock timers-active-clock">{formatClock(activeCustomTimer.remainingSeconds)}</p>
+						<p
+							class={`timers-active-label timers-active-label-${getCustomTimerWarningLevel(activeCustomTimer)}`}
+						>
+							{getCustomTimerWarningMessage(activeCustomTimer)}
+						</p>
+					{:else}
+						<p class="timers-empty">No active timer. Start one from the list.</p>
+					{/if}
+					{#if timerNotice}
+						<p class="timers-notice">{timerNotice}</p>
+					{/if}
+				</section>
+
+				<section class="timers-subcard timers-list-wrap">
+					<h3>Timer list</h3>
+					{#if customTimers.length === 0}
+						<p class="timers-empty">Add your first timer to begin.</p>
+					{:else}
+						<ul class="timers-list" ondragover={onTimersListDragOver} ondrop={onTimersListDrop}>
+							{#each customTimers as timer (timer.id)}
+								{#if dragOverTimerId === timer.id && dragDropPosition === 'before'}
+									<li class="timers-drop-indicator" aria-hidden="true">
+										<div class="timers-drop-line"></div>
+									</li>
+								{/if}
+								<li
+									class={`timers-item timers-item-${getCustomTimerWarningLevel(timer)} ${draggedTimerId === timer.id ? 'is-dragging' : ''}`}
+									draggable="true"
+									ondragstart={(event) => onTimerDragStart(event, timer.id)}
+									ondragover={(event) => onTimerDragOver(event, timer.id)}
+									ondrop={(event) => onTimerDrop(event, timer.id)}
+									ondragend={onTimerDragEnd}
+								>
+									<div class="timers-item-head">
+										<p class="timers-item-name">{timer.name}</p>
+										<div class="timers-item-actions">
+											<button class="btn btn-primary" type="button" onclick={() => toggleCustomTimer(timer.id)}>
+												{timer.status === 'running' ? 'Pause' : 'Start'}
+											</button>
+											<button class="btn" type="button" onclick={() => resetCustomTimer(timer.id)}>Reset</button>
+											<button class="btn" type="button" onclick={() => removeCustomTimer(timer.id)}>Remove</button>
+										</div>
+									</div>
+									<p class="timers-item-clock">
+										{formatClock(timer.remainingSeconds)}
+										<span>/ {formatClock(timer.totalSeconds)}</span>
+									</p>
+									<div class="timers-item-meta">
+										<span>
+											Warn: {timer.warningAtSeconds ? formatClock(timer.warningAtSeconds) : 'off'}
+										</span>
+										<span>
+											Critical: {timer.criticalAtSeconds ? formatClock(timer.criticalAtSeconds) : 'off'}
+										</span>
+									</div>
+								</li>
+								{#if dragOverTimerId === timer.id && dragDropPosition === 'after'}
+									<li class="timers-drop-indicator" aria-hidden="true">
+										<div class="timers-drop-line"></div>
+									</li>
+								{/if}
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			</div>
 		</div>
 	{/if}
 	</section>
@@ -1191,6 +1636,198 @@ function queueNotionSettingsSave(event: Event) {
 		height: 100%;
 		min-height: 0;
 		align-content: start;
+	}
+
+	.timers-summary {
+		color: var(--app-clr-on-surface-text-muted);
+		font-size: var(--app-text-sm);
+	}
+
+	.timers-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: var(--app-space-md);
+		align-items: stretch;
+		min-height: 0;
+	}
+
+	.timers-subcard {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		background: color-mix(in oklab, var(--app-clr-surface-raised) 50%, transparent);
+		padding: var(--app-space-md);
+		display: grid;
+		gap: var(--app-space-sm);
+		align-content: start;
+	}
+
+	.timers-subcard > h3 {
+		margin-bottom: var(--app-space-xs);
+	}
+
+	.timers-active-card {
+		justify-items: center;
+		text-align: center;
+	}
+
+	.timers-active-name {
+		font-weight: 700;
+		color: var(--app-clr-on-surface-text);
+	}
+
+	.timers-active-clock {
+		font-size: clamp(2.5rem, 8vw, 4rem);
+	}
+
+	.timers-active-label {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-sm);
+		padding: var(--app-space-xs) var(--app-space-sm);
+		font-size: var(--app-text-sm);
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.timers-active-label-none {
+		background: var(--app-clr-surface-card);
+		color: var(--app-clr-on-surface-text-secondary);
+	}
+
+	.timers-active-label-warning {
+		background: color-mix(in oklab, var(--app-clr-break) 24%, var(--app-clr-surface-card));
+		color: var(--app-clr-on-surface-text);
+	}
+
+	.timers-active-label-critical {
+		background: color-mix(in oklab, var(--app-clr-action-critical) 26%, var(--app-clr-surface-card));
+		color: var(--app-clr-on-surface-text);
+	}
+
+	.timers-active-label-completed {
+		background: color-mix(in oklab, var(--app-clr-action-success) 24%, var(--app-clr-surface-card));
+		color: var(--app-clr-on-surface-text);
+	}
+
+	.timers-notice {
+		width: 100%;
+		padding: var(--app-space-xs) var(--app-space-sm);
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-sm);
+		background: var(--app-clr-surface-card);
+		color: var(--app-clr-on-surface-text-secondary);
+		font-size: var(--app-text-sm);
+	}
+
+	.timers-form-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+		gap: var(--app-space-sm);
+	}
+
+	.timers-list-wrap {
+		grid-column: 1 / -1;
+		min-height: 0;
+		border: none;
+		border-radius: 0;
+		background: transparent;
+		padding: 0;
+		box-shadow: none;
+	}
+
+	.timers-empty {
+		color: var(--app-clr-on-surface-text-muted);
+	}
+
+	.timers-list {
+		gap: var(--app-space-sm);
+	}
+
+	.timers-drop-indicator {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		padding: var(--app-space-sm);
+		background: color-mix(in oklab, var(--app-clr-focus-ring) 18%, var(--app-clr-surface-card));
+		pointer-events: none;
+	}
+
+	.timers-drop-line {
+		height: 0;
+		border-top: 3px solid var(--app-clr-focus-ring);
+		border-radius: 999px;
+	}
+
+	.timers-item {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		padding: var(--app-space-sm);
+		background: var(--app-clr-surface-card);
+		display: grid;
+		gap: var(--app-space-xs);
+		transition:
+			transform var(--app-transition-fast),
+			box-shadow var(--app-transition-fast),
+			opacity var(--app-transition-fast);
+	}
+
+	.timers-item-warning {
+		background: color-mix(in oklab, var(--app-clr-break) 18%, var(--app-clr-surface-card));
+	}
+
+	.timers-item-critical {
+		background: color-mix(in oklab, var(--app-clr-action-critical) 18%, var(--app-clr-surface-card));
+	}
+
+	.timers-item-completed {
+		background: color-mix(in oklab, var(--app-clr-action-success) 20%, var(--app-clr-surface-card));
+	}
+
+	.timers-item-head {
+		display: flex;
+		justify-content: space-between;
+		gap: var(--app-space-sm);
+		align-items: flex-start;
+	}
+
+	.timers-item-name {
+		font-weight: 700;
+		color: var(--app-clr-on-surface-text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.timers-item-clock {
+		font-family: var(--app-font-mono);
+		font-size: 1.25rem;
+		font-weight: 700;
+		color: var(--app-clr-on-surface-text);
+	}
+
+	.timers-item-clock > span {
+		font-size: var(--app-text-sm);
+		font-weight: 500;
+		color: var(--app-clr-on-surface-text-muted);
+	}
+
+	.timers-item-meta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--app-space-sm);
+		font-size: var(--app-text-sm);
+		color: var(--app-clr-on-surface-text-secondary);
+	}
+
+	.timers-item-actions {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: var(--app-space-xs);
+		justify-content: flex-end;
+	}
+
+	.timers-item.is-dragging {
+		opacity: 0.65;
+		transform: scale(0.99);
 	}
 
 	.modal-settings-layout {
@@ -1826,6 +2463,10 @@ function queueNotionSettingsSave(event: Event) {
 		}
 
 		.notion-grid-two {
+			grid-template-columns: 1fr;
+		}
+
+		.timers-grid {
 			grid-template-columns: 1fr;
 		}
 	}
