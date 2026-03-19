@@ -41,12 +41,18 @@ type PersistedCustomTimersState = {
 	activeTimerId: string | null;
 	timerNotice: string;
 };
+type PomodoroBlockType = 'work' | 'break' | 'longBreak';
+type PomodoroFlowType = 'free' | 'taskSession';
+type PomodoroSessionStatus = 'in_progress' | 'completed' | 'cancelled';
 
 const DEFAULT_CUSTOM_TIMERS_STATE: PersistedCustomTimersState = {
 	timers: [],
 	activeTimerId: null,
 	timerNotice: ''
 };
+const POMODORO_BLOCK_TYPES: PomodoroBlockType[] = ['work', 'break', 'longBreak'];
+const POMODORO_FLOW_TYPES: PomodoroFlowType[] = ['free', 'taskSession'];
+const POMODORO_SESSION_STATUSES: PomodoroSessionStatus[] = ['in_progress', 'completed', 'cancelled'];
 
 function getTodayDateString() {
 	return new Date().toISOString().slice(0, 10);
@@ -247,7 +253,15 @@ export const load: PageServerLoad = async (event) => {
 		db.query.pomodoroSession.findMany({
 			where: and(eq(pomodoroSession.userId, userId), eq(pomodoroSession.day, today)),
 			orderBy: [desc(pomodoroSession.startedAt)],
-			limit: 20
+			limit: 30,
+			with: {
+				task: {
+					columns: {
+						id: true,
+						title: true
+					}
+				}
+			}
 		}),
 		getOrCreateConfig(userId),
 		db.query.daySession.findFirst({ where: and(eq(daySession.userId, userId), eq(daySession.day, today)) })
@@ -439,7 +453,12 @@ export const actions: Actions = {
 		const durationMinutes = getNumber(formData, 'durationMinutes');
 		const startedAtRaw = getString(formData, 'startedAt');
 		const endedAtRaw = getString(formData, 'endedAt');
-		const status = getString(formData, 'status') || 'completed';
+		const statusRaw = getString(formData, 'status') || 'completed';
+		const blockTypeRaw = getString(formData, 'blockType');
+		const flowTypeRaw = getString(formData, 'flowType');
+		const sessionGroupIdRaw = getString(formData, 'sessionGroupId');
+		const repetitionIndexRaw = getString(formData, 'repetitionIndex');
+		const repetitionTargetRaw = getString(formData, 'repetitionTarget');
 
 		if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) {
 			return fail(400, { message: 'Duration must be a positive number.' });
@@ -449,6 +468,36 @@ export const actions: Actions = {
 		const endedAt = endedAtRaw ? new Date(endedAtRaw) : new Date();
 		if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) {
 			return fail(400, { message: 'Invalid session time values.' });
+		}
+		const status = POMODORO_SESSION_STATUSES.includes(statusRaw as PomodoroSessionStatus)
+			? (statusRaw as PomodoroSessionStatus)
+			: null;
+		if (!status) {
+			return fail(400, { message: 'Invalid session status.' });
+		}
+		const blockType = POMODORO_BLOCK_TYPES.includes(blockTypeRaw as PomodoroBlockType)
+			? (blockTypeRaw as PomodoroBlockType)
+			: null;
+		if (!blockType) {
+			return fail(400, { message: 'Invalid block type.' });
+		}
+		const flowType = POMODORO_FLOW_TYPES.includes(flowTypeRaw as PomodoroFlowType)
+			? (flowTypeRaw as PomodoroFlowType)
+			: null;
+		if (!flowType) {
+			return fail(400, { message: 'Invalid flow type.' });
+		}
+		const sessionGroupId = sessionGroupIdRaw || null;
+		if (sessionGroupId && sessionGroupId.length > 120) {
+			return fail(400, { message: 'Session group id is too long.' });
+		}
+		const repetitionIndex = repetitionIndexRaw ? Number(repetitionIndexRaw) : null;
+		const repetitionTarget = repetitionTargetRaw ? Number(repetitionTargetRaw) : null;
+		if (repetitionIndex !== null && (!Number.isInteger(repetitionIndex) || repetitionIndex <= 0)) {
+			return fail(400, { message: 'Invalid repetition index.' });
+		}
+		if (repetitionTarget !== null && (!Number.isInteger(repetitionTarget) || repetitionTarget <= 0)) {
+			return fail(400, { message: 'Invalid repetition target.' });
 		}
 
 		let taskId: number | null = null;
@@ -467,6 +516,11 @@ export const actions: Actions = {
 			userId,
 			day,
 			taskId,
+			blockType,
+			flowType,
+			sessionGroupId,
+			repetitionIndex,
+			repetitionTarget,
 			durationMinutes,
 			startedAt,
 			endedAt,
@@ -474,6 +528,18 @@ export const actions: Actions = {
 		});
 
 		return { message: 'Pomodoro session saved.' };
+	},
+
+	deleteSessionLog: async (event) => {
+		const userId = await requireUserId(event);
+		const formData = await event.request.formData();
+		const id = getNumber(formData, 'id');
+		if (!Number.isInteger(id)) return fail(400, { message: 'Invalid session log id.' });
+
+		await db
+			.delete(pomodoroSession)
+			.where(and(eq(pomodoroSession.id, id), eq(pomodoroSession.userId, userId)));
+		return { message: 'Session log removed.' };
 	},
 
 	saveUiSettings: async (event) => {

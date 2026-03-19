@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { onDestroy, untrack } from 'svelte';
+	import { slide } from 'svelte/transition';
 	import Modal from '$lib/components/Modal.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	type Mode = 'work' | 'break' | 'longBreak';
+	type PomodoroFlow = 'free' | 'taskSession';
 	type MainTab = 'my-day' | 'timers';
 	type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
 	type SettingsTab = 'preferences' | 'pomodoro' | 'notion';
@@ -45,10 +47,19 @@
 	let breakMinutes = $state(uiSettings.breakMinutes);
 	let longBreakMinutes = $state(uiSettings.longBreakMinutes);
 	let longBreakInterval = $state(uiSettings.longBreakInterval);
-	let selectedTaskId = $state(untrack(() => data.tasks[0]?.id?.toString() ?? ''));
+	let pomodoroFlow = $state<PomodoroFlow>('free');
+	let activeSessionTaskId = $state<number | null>(null);
+	let activeSessionTaskTitle = $state('');
+	let sessionGroupId = $state('');
+	let repetitionTarget = $state(4);
+	let currentRepetition = $state(0);
+	let pendingSwitchTaskId = $state<number | null>(null);
+	let pendingSwitchTaskTitle = $state('');
+	let switchSessionPromptOpen = $state(false);
+	let pomodoroNotice = $state('');
 	let activeTab = $state<MainTab>(getInitialMainTab());
 	let settingsOpen = $state(false);
-let settingsTab = $state<SettingsTab>('preferences');
+	let settingsTab = $state<SettingsTab>('preferences');
 	let startDayPromptOpen = $state(false);
 	let finishDayPromptOpen = $state(false);
 
@@ -82,9 +93,6 @@ let settingsTab = $state<SettingsTab>('preferences');
 	let dragDropPosition = $state<'before' | 'after' | null>(null);
 
 	let sessionStartedAt = $state('');
-	let sessionEndedAt = $state('');
-	let sessionStatus = $state('completed');
-	let completedDurationMinutes = $state(untrack(() => workMinutes));
 
 	const modeOrder: Mode[] = ['work', 'break', 'longBreak'];
 
@@ -197,6 +205,24 @@ let settingsTab = $state<SettingsTab>('preferences');
 
 	function formatModeDuration(mode: Mode) {
 		return `${Math.ceil(secondsForMode(mode) / 60)}m`;
+	}
+
+	function buildSessionTargetLog() {
+		const target = clamp(Math.floor(repetitionTarget || 1), 1, 20);
+		const blocks: { key: string; mode: Mode; repetition: number }[] = [];
+		for (let repetition = 1; repetition <= target; repetition += 1) {
+			blocks.push({ key: `${repetition}-work`, mode: 'work', repetition });
+			blocks.push({ key: `${repetition}-break`, mode: 'break', repetition });
+			blocks.push({ key: `${repetition}-longBreak`, mode: 'longBreak', repetition });
+		}
+		return blocks;
+	}
+
+	function createSessionGroupId() {
+		if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+			return crypto.randomUUID();
+		}
+		return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 	}
 
 	function stopInterval() {
@@ -574,17 +600,114 @@ let settingsTab = $state<SettingsTab>('preferences');
 
 	function clearSessionDraft() {
 		sessionStartedAt = '';
-		sessionEndedAt = '';
-		sessionStatus = 'completed';
+	}
+
+	function clearTaskSessionState() {
+		pomodoroFlow = 'free';
+		activeSessionTaskId = null;
+		activeSessionTaskTitle = '';
+		sessionGroupId = '';
+		currentRepetition = 0;
+		pomodoroNotice = '';
 	}
 
 	function beginSessionIfNeeded() {
 		if (sessionStartedAt) return;
 		sessionStartedAt = new Date().toISOString();
-		sessionStatus = 'in_progress';
+		pomodoroNotice = '';
+	}
+
+	function beginTaskSession(taskId: number, title: string) {
+		stopInterval();
+		timerStatus = 'idle';
+		currentMode = 'work';
+		timeRemaining = workSeconds;
+		clearSessionDraft();
+		completedWorkSessions = 0;
+
+		pomodoroFlow = 'taskSession';
+		activeSessionTaskId = taskId;
+		activeSessionTaskTitle = title;
+		sessionGroupId = createSessionGroupId();
+		currentRepetition = 0;
+		pomodoroNotice = '';
+	}
+
+	function cancelTaskSession() {
+		resetTimer();
+		clearTaskSessionState();
+	}
+
+	function requestTaskSessionStart(taskId: number, taskTitle: string) {
+		if (
+			pomodoroFlow === 'taskSession' &&
+			activeSessionTaskId !== null &&
+			activeSessionTaskId !== taskId &&
+			timerStatus === 'running'
+		) {
+			pendingSwitchTaskId = taskId;
+			pendingSwitchTaskTitle = taskTitle;
+			switchSessionPromptOpen = true;
+			return;
+		}
+		beginTaskSession(taskId, taskTitle);
+	}
+
+	function closeSwitchSessionPrompt() {
+		switchSessionPromptOpen = false;
+		pendingSwitchTaskId = null;
+		pendingSwitchTaskTitle = '';
+	}
+
+	function confirmSwitchSessionTask() {
+		if (pendingSwitchTaskId === null || !pendingSwitchTaskTitle) {
+			closeSwitchSessionPrompt();
+			return;
+		}
+		beginTaskSession(pendingSwitchTaskId, pendingSwitchTaskTitle);
+		closeSwitchSessionPrompt();
+	}
+
+	async function persistCompletedSessionLog(payload: {
+		mode: Mode;
+		durationMinutes: number;
+		startedAt: string;
+		endedAt: string;
+	}) {
+		const flowType = pomodoroFlow === 'taskSession' ? 'taskSession' : 'free';
+		const taskId = pomodoroFlow === 'taskSession' ? activeSessionTaskId : null;
+		const formData = new FormData();
+		formData.set('day', data.today);
+		formData.set('taskId', taskId ? String(taskId) : '');
+		formData.set('durationMinutes', String(payload.durationMinutes));
+		formData.set('startedAt', payload.startedAt);
+		formData.set('endedAt', payload.endedAt);
+		formData.set('status', 'completed');
+		formData.set('blockType', payload.mode);
+		formData.set('flowType', flowType);
+		formData.set('sessionGroupId', pomodoroFlow === 'taskSession' ? sessionGroupId : '');
+		if (pomodoroFlow === 'taskSession') {
+			const repetitionIndex = String(Math.max(1, currentRepetition + 1));
+			formData.set('repetitionIndex', repetitionIndex);
+			formData.set('repetitionTarget', String(Math.max(1, repetitionTarget)));
+		}
+		try {
+			const response = await fetch('?/saveSession', { method: 'POST', body: formData });
+			if (!response.ok) {
+				pomodoroNotice = 'Could not save this Pomodoro block log.';
+				return;
+			}
+			pomodoroNotice = '';
+		} catch {
+			pomodoroNotice = 'Could not save this Pomodoro block log.';
+		}
 	}
 
 	function getNextMode(mode: Mode, completedWorkCount: number) {
+		if (pomodoroFlow === 'taskSession') {
+			const idx = modeOrder.indexOf(mode);
+			return modeOrder[(idx + 1) % modeOrder.length];
+		}
 		if (mode === 'work') {
 			return completedWorkCount % longBreakInterval === 0 ? 'longBreak' : 'break';
 		}
@@ -594,19 +717,33 @@ let settingsTab = $state<SettingsTab>('preferences');
 	function tick() {
 		if (timeRemaining <= 1) {
 			const finishedMode = currentMode;
+			const startedAtValue = sessionStartedAt || new Date(Date.now() - secondsForMode(finishedMode) * 1000).toISOString();
+			const endedAtValue = new Date().toISOString();
+			const completedMinutes = Math.round(secondsForMode(finishedMode) / 60);
+
 			timeRemaining = 0;
-			completedDurationMinutes = Math.round(secondsForMode(finishedMode) / 60);
-			sessionEndedAt = new Date().toISOString();
-			sessionStatus = 'completed';
 			timerStatus = 'completed';
 			stopInterval();
+			void persistCompletedSessionLog({
+				mode: finishedMode,
+				durationMinutes: completedMinutes,
+				startedAt: startedAtValue,
+				endedAt: endedAtValue
+			});
 
 			if (finishedMode === 'work') {
 				completedWorkSessions += 1;
 			}
+			if (pomodoroFlow === 'taskSession' && finishedMode === 'longBreak') {
+				currentRepetition += 1;
+				if (currentRepetition >= repetitionTarget) {
+					pomodoroNotice = `Session target reached for "${activeSessionTaskTitle}".`;
+				}
+			}
 
 			currentMode = getNextMode(finishedMode, completedWorkSessions);
 			timeRemaining = secondsForMode(currentMode);
+			clearSessionDraft();
 			return;
 		}
 
@@ -614,6 +751,10 @@ let settingsTab = $state<SettingsTab>('preferences');
 	}
 
 	function startPause() {
+		if (pomodoroFlow === 'taskSession' && !activeSessionTaskId) {
+			pomodoroNotice = 'Select a task session to start.';
+			return;
+		}
 		if (timerStatus === 'running') {
 			timerStatus = 'paused';
 			stopInterval();
@@ -635,8 +776,8 @@ let settingsTab = $state<SettingsTab>('preferences');
 		currentMode = 'work';
 		timeRemaining = workSeconds;
 		clearSessionDraft();
-		completedDurationMinutes = workMinutes;
 		completedWorkSessions = 0;
+		pomodoroNotice = '';
 	}
 
 	function switchMode(mode: Mode) {
@@ -733,21 +874,6 @@ function queueNotionSettingsSave(event: Event) {
 		queueUiSettingsSave();
 	}
 
-	function buildSchedule() {
-		// Build a short "what comes next" preview from current timer state.
-		const items: { mode: Mode; isActive: boolean }[] = [];
-		let simMode: Mode = currentMode;
-		let simCompletedWork = completedWorkSessions;
-
-		items.push({ mode: simMode, isActive: true });
-		while (items.length < 8) {
-			if (simMode === 'work') simCompletedWork += 1;
-			simMode = getNextMode(simMode, simCompletedWork);
-			items.push({ mode: simMode, isActive: false });
-		}
-		return items;
-	}
-
 	function onKeydown(event: KeyboardEvent) {
 		const target = event.target as HTMLElement | null;
 		const isTypingField = !!target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
@@ -799,8 +925,8 @@ function queueNotionSettingsSave(event: Event) {
 		currentMode = 'work';
 		timeRemaining = DEFAULT_WORK_MINUTES * 60;
 		clearSessionDraft();
-		completedDurationMinutes = DEFAULT_WORK_MINUTES;
 		completedWorkSessions = 0;
+		clearTaskSessionState();
 	}
 
 	function getToastTone(message?: string): 'success' | 'warning' | 'error' {
@@ -864,6 +990,9 @@ function queueNotionSettingsSave(event: Event) {
 		truncateLabel(data.user?.name ?? data.user?.email ?? 'Anchor', 12)
 	);
 	const navDate = $derived(formatDisplayDate(data.today));
+	const pomodoroCardTitle = $derived(
+		pomodoroFlow === 'taskSession' && activeSessionTaskTitle ? activeSessionTaskTitle : 'Pomodoro'
+	);
 
 	$effect(() => {
 		applyTheme();
@@ -903,6 +1032,17 @@ function queueNotionSettingsSave(event: Event) {
 		if (!form.message.startsWith('Day finished')) return;
 		closeStartDayPrompt();
 		closeFinishDayPrompt();
+	});
+
+	$effect(() => {
+		if (activeSessionTaskId === null) return;
+		const task = data.tasks.find((item) => item.id === activeSessionTaskId);
+		if (!task) {
+			cancelTaskSession();
+			pomodoroNotice = 'Task session stopped because the linked task no longer exists.';
+			return;
+		}
+		activeSessionTaskTitle = task.title;
 	});
 
 	$effect(() => {
@@ -955,7 +1095,6 @@ function queueNotionSettingsSave(event: Event) {
 				<h1>{navTitle}</h1>
 				<p class="nav-date">{navDate}</p>
 			</div>
-
 			<div class="nav-tabs" role="tablist" aria-label="Main sections">
 				<button
 					class="tab-btn"
@@ -980,7 +1119,6 @@ function queueNotionSettingsSave(event: Event) {
 					Timers
 				</button>
 			</div>
-
 			<div class="nav-actions">
 				<button
 					class="icon-btn"
@@ -1080,11 +1218,45 @@ function queueNotionSettingsSave(event: Event) {
 		</section>
 	</Modal>
 
+	<Modal
+		open={switchSessionPromptOpen}
+		title="Switch task session"
+		compact
+		onClose={closeSwitchSessionPrompt}
+	>
+		<section class="start-day-prompt" aria-label="Switch task session prompt">
+			<h3>Start a different task session?</h3>
+			<p>Are you sure you want to start a different task?</p>
+			<div class="row start-day-actions">
+				<button class="btn" type="button" onclick={closeSwitchSessionPrompt}>No</button>
+				<button class="btn btn-primary" type="button" onclick={confirmSwitchSessionTask}>Yes</button>
+			</div>
+		</section>
+	</Modal>
+
 	{#if activeTab === 'my-day'}
 		<div class="my-day-grid" id="panel-my-day" role="tabpanel" aria-label="My day">
-			<section class="card pomodoro-card">
-				<div class="section-heading section-heading-pomodoro">
-					<h2>Pomodoro</h2>
+			<section
+				class="card pomodoro-card"
+				class:content-fit={pomodoroFlow === 'free'}
+				class:task-mode={pomodoroFlow === 'taskSession'}
+			>
+				<div class="section-heading-pomodoro">
+					<div class="pomodoro-header-row">
+						<div class="pomodoro-heading-wrap">
+							<h2>{pomodoroCardTitle}</h2>
+							{#if pomodoroFlow === 'taskSession'}
+								<p class="pomodoro-flow-chip">Task session</p>
+							{/if}
+						</div>
+						{#if pomodoroFlow === 'taskSession'}
+							<button class="task-icon-btn task-icon-btn-critical pomodoro-close-btn" type="button" onclick={cancelTaskSession} title="Cancel task session">
+								<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="m18 6-12 12M6 6l12 12" />
+								</svg>
+							</button>
+						{/if}
+					</div>
 					<div class="mode-toggle-wrap" role="group" aria-label="Pomodoro modes">
 						<button
 							type="button"
@@ -1116,36 +1288,36 @@ function queueNotionSettingsSave(event: Event) {
 					<button type="button" class="btn" onclick={resetTimer}>Reset</button>
 				</div>
 
-				<label>
-					Linked task
-					<select bind:value={selectedTaskId}>
-						<option value="">No task</option>
-						{#each data.tasks as task}
-							<option value={task.id}>{task.title}</option>
-						{/each}
-					</select>
-				</label>
-
-				<form method="post" action="?/saveSession" class="session-save" use:enhance>
-					<input type="hidden" name="day" value={data.today} />
-					<input type="hidden" name="taskId" value={selectedTaskId} />
-					<input type="hidden" name="durationMinutes" value={completedDurationMinutes} />
-					<input type="hidden" name="startedAt" value={sessionStartedAt} />
-					<input type="hidden" name="endedAt" value={sessionEndedAt} />
-					<input type="hidden" name="status" value={sessionStatus} />
-					<button class="btn" type="submit" disabled={timerStatus !== 'completed'}>
-						Save completed session
-					</button>
-				</form>
-
-				<div class="schedule">
-					{#each buildSchedule() as step}
-						<div class="schedule-item" class:active={step.isActive}>
-							<span>{modeLabel(step.mode)}</span>
-							<span>{formatModeDuration(step.mode)}</span>
+				{#if pomodoroFlow === 'taskSession'}
+					<div class="pomodoro-session-panel" transition:slide={{ duration: 220 }}>
+						<div class="pomodoro-session-controls">
+							<label>
+								Repetitions target
+								<input type="number" min="1" max="20" bind:value={repetitionTarget} />
+							</label>
 						</div>
-					{/each}
-				</div>
+
+						{#if pomodoroNotice}
+							<p class="pomodoro-notice">{pomodoroNotice}</p>
+						{/if}
+
+						<section class="pomodoro-log">
+							<div class="section-heading">
+								<h3>Work/Break/Long break log</h3>
+							</div>
+							<div class="schedule">
+								{#each buildSessionTargetLog() as block}
+									<div class="schedule-item" class:active={block.repetition === currentRepetition + 1 && block.mode === currentMode}>
+										<span>{modeLabel(block.mode)}</span>
+										<span>{formatModeDuration(block.mode)}</span>
+									</div>
+								{/each}
+							</div>
+						</section>
+					</div>
+				{:else if pomodoroNotice}
+					<p class="pomodoro-notice">{pomodoroNotice}</p>
+				{/if}
 			</section>
 
 			<section class="card todos-card">
@@ -1179,6 +1351,31 @@ function queueNotionSettingsSave(event: Event) {
 							</form>
 
 							<div class="task-row-actions">
+								<button
+									class="task-icon-btn task-icon-btn-primary"
+									type="button"
+									aria-label={pomodoroFlow === 'taskSession' && activeSessionTaskId === task.id
+										? 'Stop Pomodoro session'
+										: 'Start Pomodoro session'}
+									title={pomodoroFlow === 'taskSession' && activeSessionTaskId === task.id
+										? 'Stop session'
+										: 'Start session'}
+									onclick={() =>
+										pomodoroFlow === 'taskSession' && activeSessionTaskId === task.id
+											? cancelTaskSession()
+											: requestTaskSessionStart(task.id, task.title)}
+								>
+									{#if pomodoroFlow === 'taskSession' && activeSessionTaskId === task.id}
+										<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+											<rect x="6" y="6" width="12" height="12" />
+										</svg>
+									{:else}
+										<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+											<path d="M8 5v14l11-7z" />
+										</svg>
+									{/if}
+								</button>
+
 								<form method="post" action="?/toggleTask" use:enhance>
 									<input type="hidden" name="id" value={task.id} />
 									<input type="hidden" name="done" value={task.done ? 'false' : 'true'} />
@@ -1743,6 +1940,29 @@ function queueNotionSettingsSave(event: Event) {
 		gap: var(--app-space-sm);
 	}
 
+	.pomodoro-card.content-fit {
+		align-self: start;
+		height: auto;
+		overflow: visible;
+	}
+
+	.page-shell[data-mode='work'] .pomodoro-card.task-mode {
+		border-color: var(--app-clr-work);
+	}
+
+	.page-shell[data-mode='break'] .pomodoro-card.task-mode {
+		border-color: var(--app-clr-break);
+	}
+
+	.page-shell[data-mode='longBreak'] .pomodoro-card.task-mode {
+		border-color: var(--app-clr-long-break);
+	}
+
+	.pomodoro-session-panel {
+		display: grid;
+		gap: var(--app-space-sm);
+	}
+
 	.todos-card {
 		grid-area: todos;
 	}
@@ -2044,7 +2264,8 @@ function queueNotionSettingsSave(event: Event) {
 
 	.card > h2,
 	.card > h3,
-	.card > .section-heading {
+	.card > .section-heading,
+	.card > .section-heading-pomodoro {
 		margin-bottom: var(--app-space-xs);
 	}
 
@@ -2054,6 +2275,39 @@ function queueNotionSettingsSave(event: Event) {
 		justify-content: space-between;
 		gap: var(--app-space-sm);
 		flex-wrap: wrap;
+	}
+
+	.section-heading-pomodoro {
+		display: grid;
+		gap: var(--app-space-sm);
+		width: 100%;
+		justify-items: stretch;
+	}
+
+	.pomodoro-header-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--app-space-sm);
+		width: 100%;
+	}
+
+	.pomodoro-close-btn {
+		margin-left: auto;
+	}
+
+	.pomodoro-heading-wrap {
+		display: grid;
+		gap: 0.15rem;
+		justify-items: start;
+		text-align: left;
+	}
+
+	.pomodoro-flow-chip {
+		font-size: var(--app-text-sm);
+		color: var(--app-clr-on-surface-text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
 	}
 
 	p {
@@ -2104,9 +2358,8 @@ function queueNotionSettingsSave(event: Event) {
 		transform: translate(1px, 1px);
 	}
 
-	/* Keep only primary buttons and selects aligned. */
-	.btn,
-	select {
+	/* Keep primary action controls aligned. */
+	.btn {
 		height: var(--app-control-height-base);
 	}
 
@@ -2169,6 +2422,25 @@ function queueNotionSettingsSave(event: Event) {
 		min-width: 0;
 	}
 
+	.pomodoro-session-controls {
+		display: grid;
+		gap: var(--app-space-sm);
+	}
+
+	.pomodoro-session-controls input[type='number'] {
+		height: var(--app-control-height-base);
+		padding-top: 0;
+		padding-bottom: 0;
+	}
+
+	.pomodoro-notice {
+		padding: var(--app-space-xs) var(--app-space-sm);
+		border-radius: var(--app-radius-sm);
+		background: color-mix(in oklab, var(--app-clr-action-primary) 16%, transparent);
+		color: var(--app-clr-on-surface-text-secondary);
+		font-size: var(--app-text-sm);
+	}
+
 	label {
 		display: grid;
 		gap: var(--app-space-xs);
@@ -2176,14 +2448,12 @@ function queueNotionSettingsSave(event: Event) {
 	}
 
 	input,
-	select,
 	textarea,
 	button {
 		font: inherit;
 	}
 
 	input,
-	select,
 	textarea {
 		width: 100%;
 		border: var(--app-border-thick);
@@ -2195,23 +2465,6 @@ function queueNotionSettingsSave(event: Event) {
 
 	.dump-card textarea {
 		resize: vertical;
-	}
-
-	select {
-		-webkit-appearance: none;
-		appearance: none;
-		padding-top: 0;
-		padding-bottom: 0;
-		line-height: 1.2;
-		padding-right: 2rem;
-		background-image:
-			linear-gradient(45deg, transparent 50%, var(--app-clr-on-surface-text-secondary) 50%),
-			linear-gradient(135deg, var(--app-clr-on-surface-text-secondary) 50%, transparent 50%);
-		background-position:
-			calc(100% - 14px) calc(50% - 2px),
-			calc(100% - 8px) calc(50% - 2px);
-		background-size: 6px 6px, 6px 6px;
-		background-repeat: no-repeat;
 	}
 
 	input[type='range'] {
@@ -2424,10 +2677,6 @@ function queueNotionSettingsSave(event: Event) {
 		color: var(--app-clr-long-break);
 	}
 
-	.session-save {
-		margin-top: var(--app-space-xs);
-	}
-
 	.schedule {
 		display: grid;
 		gap: var(--app-space-xs);
@@ -2445,6 +2694,12 @@ function queueNotionSettingsSave(event: Event) {
 	.schedule-item.active {
 		color: var(--app-clr-on-surface-text);
 		font-weight: 600;
+	}
+
+	.pomodoro-log {
+		display: grid;
+		gap: var(--app-space-xs);
+		margin-top: var(--app-space-xs);
 	}
 
 	ul {
@@ -2595,7 +2850,6 @@ function queueNotionSettingsSave(event: Event) {
 	}
 
 	input:focus-visible,
-	select:focus-visible,
 	textarea:focus-visible,
 	button:focus-visible {
 		outline: 3px solid var(--app-clr-focus-ring);

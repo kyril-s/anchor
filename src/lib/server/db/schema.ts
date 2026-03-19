@@ -41,13 +41,22 @@ export const pomodoroSession = pgTable(
 		userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
 		day: text('day').notNull(),
 		taskId: integer('task_id').references(() => dailyTask.id, { onDelete: 'set null' }),
+		blockType: text('block_type'),
+		flowType: text('flow_type'),
+		sessionGroupId: text('session_group_id'),
+		repetitionIndex: integer('repetition_index'),
+		repetitionTarget: integer('repetition_target'),
 		durationMinutes: integer('duration_minutes').notNull(),
 		startedAt: timestamp('started_at').notNull(),
 		endedAt: timestamp('ended_at'),
 		status: text('status').notNull().default('completed'),
 		createdAt: timestamp('created_at').defaultNow().notNull()
 	},
-	(table) => [index('pomodoro_session_user_day_started_at_idx').on(table.userId, table.day, table.startedAt)]
+	(table) => [
+		index('pomodoro_session_user_day_started_at_idx').on(table.userId, table.day, table.startedAt),
+		index('pomodoro_session_user_day_flow_idx').on(table.userId, table.day, table.flowType),
+		index('pomodoro_session_session_group_idx').on(table.sessionGroupId)
+	]
 );
 
 export const dailyNote = pgTable(
