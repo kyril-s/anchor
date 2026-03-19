@@ -67,6 +67,7 @@ let settingsTab = $state<SettingsTab>('preferences');
 	let customTimersSaveHandle: ReturnType<typeof setTimeout> | null = null;
 	let hasHydratedCustomTimersState = false;
 	let lastCustomTimersSignature = '';
+	let lastPersistedCustomTimersSignature = '';
 
 	let timerDraftName = $state('');
 	let timerDraftDurationMinutes = $state(25);
@@ -236,11 +237,19 @@ let settingsTab = $state<SettingsTab>('preferences');
 		};
 	}
 
-	async function persistCustomTimersState() {
+	async function persistCustomTimersState(options?: { keepalive?: boolean }) {
+		const signature = JSON.stringify(getCustomTimersPersistencePayload());
+		if (signature === lastPersistedCustomTimersSignature) return;
+
 		const formData = new FormData();
-		formData.set('state', JSON.stringify(getCustomTimersPersistencePayload()));
+		formData.set('state', signature);
 		try {
-			await fetch('?/saveCustomTimers', { method: 'POST', body: formData });
+			await fetch('?/saveCustomTimers', {
+				method: 'POST',
+				body: formData,
+				keepalive: Boolean(options?.keepalive)
+			});
+			lastPersistedCustomTimersSignature = signature;
 		} catch {
 			// Keep the timers responsive; state will retry on the next change.
 		}
@@ -901,11 +910,33 @@ function queueNotionSettingsSave(event: Event) {
 		if (!hasHydratedCustomTimersState) {
 			hasHydratedCustomTimersState = true;
 			lastCustomTimersSignature = signature;
+			lastPersistedCustomTimersSignature = signature;
 			return;
 		}
 		if (signature === lastCustomTimersSignature) return;
 		lastCustomTimersSignature = signature;
 		queueCustomTimersStateSave();
+	});
+
+	$effect(() => {
+		const flushPendingCustomTimersState = () => {
+			clearCustomTimersSaveHandle();
+			void persistCustomTimersState({ keepalive: true });
+		};
+		const onVisibilityChange = () => {
+			if (document.visibilityState !== 'hidden') return;
+			flushPendingCustomTimersState();
+		};
+
+		window.addEventListener('pagehide', flushPendingCustomTimersState);
+		window.addEventListener('beforeunload', flushPendingCustomTimersState);
+		document.addEventListener('visibilitychange', onVisibilityChange);
+
+		return () => {
+			window.removeEventListener('pagehide', flushPendingCustomTimersState);
+			window.removeEventListener('beforeunload', flushPendingCustomTimersState);
+			document.removeEventListener('visibilitychange', onVisibilityChange);
+		};
 	});
 
 	onDestroy(() => {

@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
 import { auth } from '$lib/server/auth';
@@ -207,25 +207,32 @@ async function moveUnfinishedTasks(userId: string, fromDay: string, toDay: strin
 	const unfinished = await db.query.dailyTask.findMany({
 		where: and(eq(dailyTask.userId, userId), eq(dailyTask.day, fromDay), eq(dailyTask.done, false))
 	});
+	if (unfinished.length === 0) return 0;
 
-	let movedCount = 0;
-	for (const task of unfinished) {
-		const existingForTargetDay = await db.query.dailyTask.findFirst({
-			where: and(eq(dailyTask.userId, userId), eq(dailyTask.day, toDay), eq(dailyTask.title, task.title))
-		});
-		if (existingForTargetDay) continue;
-
-		await db.insert(dailyTask).values({
+	const unfinishedTitles = [...new Set(unfinished.map((task) => task.title))];
+	const existingForTargetDay = await db.query.dailyTask.findMany({
+		where: and(
+			eq(dailyTask.userId, userId),
+			eq(dailyTask.day, toDay),
+			inArray(dailyTask.title, unfinishedTitles)
+		),
+		columns: { title: true }
+	});
+	const existingTitles = new Set(existingForTargetDay.map((task) => task.title));
+	const tasksToInsert = unfinished
+		.filter((task) => !existingTitles.has(task.title))
+		.map((task) => ({
 			userId,
 			day: toDay,
 			title: task.title,
 			done: false,
 			carriedOver: true
-		});
-		movedCount += 1;
-	}
+		}));
 
-	return movedCount;
+	if (tasksToInsert.length === 0) return 0;
+	await db.insert(dailyTask).values(tasksToInsert);
+
+	return tasksToInsert.length;
 }
 
 export const load: PageServerLoad = async (event) => {

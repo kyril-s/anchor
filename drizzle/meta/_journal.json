@@ -36,6 +36,13 @@
       "when": 1773876000000,
       "tag": "0004_auth_isolation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1773880000000,
+      "tag": "0005_query_latency_indexes",
+      "breakpoints": true
     }
   ]
 }

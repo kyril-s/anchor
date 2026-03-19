@@ -1,6 +1,7 @@
 import { relations } from 'drizzle-orm';
 import {
 	boolean,
+	index,
 	integer,
 	jsonb,
 	pgTable,
@@ -11,32 +12,43 @@ import {
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.schema';
 
-export const dailyTask = pgTable('daily_task', {
-	id: serial('id').primaryKey(),
-	userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
-	day: text('day').notNull(),
-	title: text('title').notNull(),
-	done: boolean('done').notNull().default(false),
-	carriedOver: boolean('carried_over').notNull().default(false),
-	notionPageId: text('notion_page_id'),
-	createdAt: timestamp('created_at').defaultNow().notNull(),
-	updatedAt: timestamp('updated_at')
-		.defaultNow()
-		.$onUpdate(() => new Date())
-		.notNull()
-});
+export const dailyTask = pgTable(
+	'daily_task',
+	{
+		id: serial('id').primaryKey(),
+		userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		day: text('day').notNull(),
+		title: text('title').notNull(),
+		done: boolean('done').notNull().default(false),
+		carriedOver: boolean('carried_over').notNull().default(false),
+		notionPageId: text('notion_page_id'),
+		createdAt: timestamp('created_at').defaultNow().notNull(),
+		updatedAt: timestamp('updated_at')
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull()
+	},
+	(table) => [
+		index('daily_task_user_day_idx').on(table.userId, table.day),
+		index('daily_task_user_day_title_idx').on(table.userId, table.day, table.title)
+	]
+);
 
-export const pomodoroSession = pgTable('pomodoro_session', {
-	id: serial('id').primaryKey(),
-	userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
-	day: text('day').notNull(),
-	taskId: integer('task_id').references(() => dailyTask.id, { onDelete: 'set null' }),
-	durationMinutes: integer('duration_minutes').notNull(),
-	startedAt: timestamp('started_at').notNull(),
-	endedAt: timestamp('ended_at'),
-	status: text('status').notNull().default('completed'),
-	createdAt: timestamp('created_at').defaultNow().notNull()
-});
+export const pomodoroSession = pgTable(
+	'pomodoro_session',
+	{
+		id: serial('id').primaryKey(),
+		userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		day: text('day').notNull(),
+		taskId: integer('task_id').references(() => dailyTask.id, { onDelete: 'set null' }),
+		durationMinutes: integer('duration_minutes').notNull(),
+		startedAt: timestamp('started_at').notNull(),
+		endedAt: timestamp('ended_at'),
+		status: text('status').notNull().default('completed'),
+		createdAt: timestamp('created_at').defaultNow().notNull()
+	},
+	(table) => [index('pomodoro_session_user_day_started_at_idx').on(table.userId, table.day, table.startedAt)]
+);
 
 export const dailyNote = pgTable(
 	'daily_note',

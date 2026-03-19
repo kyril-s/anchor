@@ -2,7 +2,28 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { appConfig, dailyNote, dailyTask, daySession, pomodoroSession } from '$lib/server/db/schema';
 
+const claimCheckCompletedByUser = new Set<string>();
+const claimCheckInFlightByUser = new Map<string, Promise<boolean>>();
+
 export async function claimLegacyDataForUser(userId: string) {
+	if (claimCheckCompletedByUser.has(userId)) {
+		return false;
+	}
+
+	const inFlightClaim = claimCheckInFlightByUser.get(userId);
+	if (inFlightClaim) {
+		return inFlightClaim;
+	}
+
+	const claimPromise = claimLegacyDataForUserUncached(userId).finally(() => {
+		claimCheckInFlightByUser.delete(userId);
+		claimCheckCompletedByUser.add(userId);
+	});
+	claimCheckInFlightByUser.set(userId, claimPromise);
+	return claimPromise;
+}
+
+async function claimLegacyDataForUserUncached(userId: string) {
 	const [hasOwnedTask, hasOwnedSession, hasOwnedNote, hasOwnedDaySession, hasOwnedConfig] =
 		await Promise.all([
 			db.query.dailyTask.findFirst({ where: eq(dailyTask.userId, userId) }),
