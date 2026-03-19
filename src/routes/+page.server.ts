@@ -44,6 +44,29 @@ function getString(formData: FormData, key: string) {
 	return typeof value === 'string' ? value.trim() : '';
 }
 
+function toUuidFromCompactHex(value: string) {
+	const compact = value.replace(/-/g, '').toLowerCase();
+	if (!/^[0-9a-f]{32}$/.test(compact)) return null;
+	return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+}
+
+function normalizeNotionDatabaseId(value: string | null | undefined) {
+	const raw = value?.trim();
+	if (!raw) return '';
+
+	let decoded = raw;
+	try {
+		decoded = decodeURIComponent(raw);
+	} catch {
+		// Keep original value when URI decoding fails.
+	}
+
+	const uuidMatch = decoded.match(/[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}/);
+	if (!uuidMatch) return raw;
+
+	return toUuidFromCompactHex(uuidMatch[0]) ?? raw;
+}
+
 function getNumber(formData: FormData, key: string) {
 	const value = Number(getString(formData, key));
 	return Number.isFinite(value) ? value : NaN;
@@ -154,8 +177,8 @@ export const load: PageServerLoad = async (event) => {
 		uiSettings: normalizeUiSettings(config.uiSettingsJson),
 		notionConfig: {
 			hasApiKey: Boolean(config.notionApiKey || env.NOTION_API_KEY),
-			tasksDbId: config.tasksDbId ?? env.NOTION_TASKS_DB_ID ?? '',
-			notesDbId: config.notesDbId ?? env.NOTION_NOTES_DB_ID ?? '',
+			tasksDbId: normalizeNotionDatabaseId(config.tasksDbId || env.NOTION_TASKS_DB_ID) || '',
+			notesDbId: normalizeNotionDatabaseId(config.notesDbId || env.NOTION_NOTES_DB_ID) || '',
 			taskFieldMap: normalizedTaskMap,
 			noteFieldMap: normalizedNoteMap
 		}
@@ -375,8 +398,8 @@ export const actions: Actions = {
 		const existing = await getOrCreateConfig(userId);
 
 		const notionApiKeyInput = getString(formData, 'notionApiKey');
-		const tasksDbId = getString(formData, 'tasksDbId');
-		const notesDbId = getString(formData, 'notesDbId');
+		const tasksDbId = normalizeNotionDatabaseId(getString(formData, 'tasksDbId'));
+		const notesDbId = normalizeNotionDatabaseId(getString(formData, 'notesDbId'));
 
 		const taskFieldMap = normalizeTaskFieldMap({
 			title: getString(formData, 'taskTitleProperty'),
@@ -410,8 +433,8 @@ export const actions: Actions = {
 		const today = getTodayDateString();
 		const config = await getOrCreateConfig(userId);
 		const apiKey = config.notionApiKey || env.NOTION_API_KEY;
-		const tasksDbId = config.tasksDbId || env.NOTION_TASKS_DB_ID;
-		const notesDbId = config.notesDbId || env.NOTION_NOTES_DB_ID;
+		const tasksDbId = normalizeNotionDatabaseId(config.tasksDbId || env.NOTION_TASKS_DB_ID);
+		const notesDbId = normalizeNotionDatabaseId(config.notesDbId || env.NOTION_NOTES_DB_ID);
 
 		if (!apiKey || !tasksDbId || !notesDbId) {
 			return fail(400, {

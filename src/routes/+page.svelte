@@ -8,12 +8,14 @@
 	type Mode = 'work' | 'break' | 'longBreak';
 	type MainTab = 'my-day' | 'timers';
 	type TimerStatus = 'idle' | 'running' | 'paused' | 'completed';
+type SettingsTab = 'preferences' | 'pomodoro' | 'notion';
 	const DEFAULT_THEME_HUE = 330.216;
 	const DEFAULT_WORK_MINUTES = 25;
 	const DEFAULT_BREAK_MINUTES = 5;
 	const DEFAULT_LONG_BREAK_MINUTES = 25;
 	const DEFAULT_LONG_BREAK_INTERVAL = 4;
 	const UI_SETTINGS_SAVE_DEBOUNCE_MS = 400;
+const NOTION_SETTINGS_SAVE_DEBOUNCE_MS = 500;
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	const uiSettings = untrack(() => data.uiSettings);
@@ -26,6 +28,7 @@
 	let selectedTaskId = $state(untrack(() => data.tasks[0]?.id?.toString() ?? ''));
 	let activeTab = $state<MainTab>('my-day');
 	let settingsOpen = $state(false);
+let settingsTab = $state<SettingsTab>('preferences');
 	let startDayPromptOpen = $state(false);
 	let finishDayPromptOpen = $state(false);
 
@@ -39,6 +42,7 @@
 	let timerStatus = $state<TimerStatus>('idle');
 	let timerHandle: ReturnType<typeof setInterval> | null = null;
 	let uiSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
+let notionSettingsSaveHandle: ReturnType<typeof setTimeout> | null = null;
 
 	let sessionStartedAt = $state('');
 	let sessionEndedAt = $state('');
@@ -140,6 +144,12 @@
 		clearTimeout(uiSettingsSaveHandle);
 		uiSettingsSaveHandle = null;
 	}
+
+function clearNotionSettingsSaveHandle() {
+	if (!notionSettingsSaveHandle) return;
+	clearTimeout(notionSettingsSaveHandle);
+	notionSettingsSaveHandle = null;
+}
 
 	function clearSessionDraft() {
 		sessionStartedAt = '';
@@ -276,6 +286,24 @@
 		queueUiSettingsSave();
 	}
 
+async function persistNotionSettings(formElement: HTMLFormElement) {
+	const formData = new FormData(formElement);
+	try {
+		await fetch('?/saveNotionConfig', { method: 'POST', body: formData });
+	} catch {
+		// Keep the form responsive; users can retry by editing any field again.
+	}
+}
+
+function queueNotionSettingsSave(event: Event) {
+	const formElement = event.currentTarget;
+	if (!(formElement instanceof HTMLFormElement)) return;
+	clearNotionSettingsSaveHandle();
+	notionSettingsSaveHandle = setTimeout(() => {
+		void persistNotionSettings(formElement);
+	}, NOTION_SETTINGS_SAVE_DEBOUNCE_MS);
+}
+
 	function applyShortcut(mode: Mode, minutes: number) {
 		if (timerStatus === 'running') return;
 		if (mode === 'work') workMinutes = minutes;
@@ -314,6 +342,7 @@
 	}
 
 	function openSettings() {
+		settingsTab = 'preferences';
 		settingsOpen = true;
 	}
 
@@ -450,6 +479,7 @@
 	onDestroy(() => {
 		stopInterval();
 		clearUiSettingsSaveHandle();
+	clearNotionSettingsSaveHandle();
 	});
 </script>
 
@@ -749,151 +779,207 @@
 
 	<Modal open={settingsOpen} title="Settings" onClose={closeSettings}>
 		<div class="modal-settings-layout">
-			<section class="card" data-elevated="false">
-				<h3>Pomodoro Customization</h3>
-				<div class="shortcut-wrap">
-					<div class="shortcut-row">
-						<span>Work</span>
-						<button type="button" class="chip" onclick={() => applyShortcut('work', 15)}>15m</button>
-						<button type="button" class="chip" onclick={() => applyShortcut('work', 25)}>25m</button>
-						<button type="button" class="chip" onclick={() => applyShortcut('work', 45)}>45m</button>
+			<nav class="settings-tabs" aria-label="Settings categories">
+				<button
+					type="button"
+					class="settings-tab"
+					class:active={settingsTab === 'preferences'}
+					onclick={() => (settingsTab = 'preferences')}
+				>
+					Preferences
+				</button>
+				<button
+					type="button"
+					class="settings-tab"
+					class:active={settingsTab === 'pomodoro'}
+					onclick={() => (settingsTab = 'pomodoro')}
+				>
+					Pomodoro
+				</button>
+				<button
+					type="button"
+					class="settings-tab"
+					class:active={settingsTab === 'notion'}
+					onclick={() => (settingsTab = 'notion')}
+				>
+					Notion
+				</button>
+			</nav>
+
+			<section class="card settings-panel" data-elevated="false">
+				{#if settingsTab === 'preferences'}
+					<h3>Preferences</h3>
+					<div class="settings-grid">
+						<label class="hue-label">
+							Theme hue
+							<input
+								name="themeHue"
+								type="range"
+								min="0"
+								max="360"
+								bind:value={currentHue}
+								oninput={queuePreferenceSettingsSave}
+							/>
+						</label>
 					</div>
-					<div class="shortcut-row">
-						<span>Break</span>
-						<button type="button" class="chip" onclick={() => applyShortcut('break', 2)}>2m</button>
-						<button type="button" class="chip" onclick={() => applyShortcut('break', 5)}>5m</button>
-						<button type="button" class="chip" onclick={() => applyShortcut('break', 15)}>15m</button>
+				{:else if settingsTab === 'pomodoro'}
+					<h3>Pomodoro Customization</h3>
+					<div class="shortcut-wrap">
+						<div class="shortcut-row">
+							<span>Work</span>
+							<button type="button" class="chip" onclick={() => applyShortcut('work', 15)}>15m</button>
+							<button type="button" class="chip" onclick={() => applyShortcut('work', 25)}>25m</button>
+							<button type="button" class="chip" onclick={() => applyShortcut('work', 45)}>45m</button>
+						</div>
+						<div class="shortcut-row">
+							<span>Break</span>
+							<button type="button" class="chip" onclick={() => applyShortcut('break', 2)}>2m</button>
+							<button type="button" class="chip" onclick={() => applyShortcut('break', 5)}>5m</button>
+							<button type="button" class="chip" onclick={() => applyShortcut('break', 15)}>15m</button>
+						</div>
+						<div class="shortcut-row">
+							<span>Long</span>
+							<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 25)}>25m</button>
+							<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 45)}>45m</button>
+							<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 60)}>60m</button>
+						</div>
 					</div>
-					<div class="shortcut-row">
-						<span>Long</span>
-						<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 25)}>25m</button>
-						<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 45)}>45m</button>
-						<button type="button" class="chip" onclick={() => applyShortcut('longBreak', 60)}>60m</button>
+
+					<div class="settings-grid">
+						<label>
+							Work (min)
+							<input
+								name="workMinutes"
+								type="number"
+								min="1"
+								max="120"
+								bind:value={workMinutes}
+								oninput={queuePomodoroSettingsSave}
+							/>
+						</label>
+						<label>
+							Break (min)
+							<input
+								name="breakMinutes"
+								type="number"
+								min="1"
+								max="60"
+								bind:value={breakMinutes}
+								oninput={queuePomodoroSettingsSave}
+							/>
+						</label>
+						<label>
+							Long Break (min)
+							<input
+								name="longBreakMinutes"
+								type="number"
+								min="1"
+								max="120"
+								bind:value={longBreakMinutes}
+								oninput={queuePomodoroSettingsSave}
+							/>
+						</label>
+						<label>
+							Long break every
+							<input
+								name="longBreakInterval"
+								type="number"
+								min="1"
+								max="20"
+								bind:value={longBreakInterval}
+								oninput={queuePomodoroSettingsSave}
+							/>
+						</label>
 					</div>
-				</div>
+				{:else}
+					<h3>Notion Settings</h3>
+					<form
+						method="post"
+						action="?/saveNotionConfig"
+						class="notion-settings-form"
+						use:enhance
+						oninput={queueNotionSettingsSave}
+					>
+						<fieldset class="notion-group">
+							<legend>Connection</legend>
+							<p class="notion-help">
+								Already connected to Notion? You can leave this blank and we will keep using the API
+								key you already saved.
+							</p>
+							<label>
+								Notion secret key
+								<input
+									type="password"
+									name="notionApiKey"
+									placeholder={data.notionConfig.hasApiKey ? '********' : 'secret_xxx'}
+								/>
+							</label>
+						</fieldset>
 
-				<div class="settings-grid">
-					<label>
-						Work (min)
-						<input
-							name="workMinutes"
-							type="number"
-							min="1"
-							max="120"
-							bind:value={workMinutes}
-							oninput={queuePomodoroSettingsSave}
-						/>
-					</label>
-					<label>
-						Break (min)
-						<input
-							name="breakMinutes"
-							type="number"
-							min="1"
-							max="60"
-							bind:value={breakMinutes}
-							oninput={queuePomodoroSettingsSave}
-						/>
-					</label>
-					<label>
-						Long Break (min)
-						<input
-							name="longBreakMinutes"
-							type="number"
-							min="1"
-							max="120"
-							bind:value={longBreakMinutes}
-							oninput={queuePomodoroSettingsSave}
-						/>
-					</label>
-					<label>
-						Long break every
-						<input
-							name="longBreakInterval"
-							type="number"
-							min="1"
-							max="20"
-							bind:value={longBreakInterval}
-							oninput={queuePomodoroSettingsSave}
-						/>
-					</label>
-				</div>
-			</section>
+						<fieldset class="notion-group">
+							<legend>Databases</legend>
+							<div class="settings-grid notion-grid-two">
+								<label>
+									Tasks database ID
+									<input type="text" name="tasksDbId" value={data.notionConfig.tasksDbId} />
+								</label>
+								<label>
+									Notes database ID
+									<input type="text" name="notesDbId" value={data.notionConfig.notesDbId} />
+								</label>
+							</div>
+						</fieldset>
 
-			<section class="card" data-elevated="false">
-				<h3>Preferences</h3>
-				<div class="settings-grid">
-					<label class="hue-label">
-						Theme hue
-						<input
-							name="themeHue"
-							type="range"
-							min="0"
-							max="360"
-							bind:value={currentHue}
-							oninput={queuePreferenceSettingsSave}
-						/>
-					</label>
-				</div>
-			</section>
+						<fieldset class="notion-group">
+							<legend>Task field mapping</legend>
+							<div class="settings-grid notion-grid-two">
+								<label>
+									Title property
+									<input type="text" name="taskTitleProperty" value={data.notionConfig.taskFieldMap.title} />
+								</label>
+								<label>
+									Done property
+									<input type="text" name="taskDoneProperty" value={data.notionConfig.taskFieldMap.done} />
+								</label>
+								<label>
+									Day property
+									<input type="text" name="taskDayProperty" value={data.notionConfig.taskFieldMap.day} />
+								</label>
+								<label>
+									Carried-over property
+									<input
+										type="text"
+										name="taskCarriedOverProperty"
+										value={data.notionConfig.taskFieldMap.carriedOver}
+									/>
+								</label>
+							</div>
+						</fieldset>
 
-			<section class="card" data-elevated="false">
-				<h3>Notion Settings</h3>
-				<form method="post" action="?/saveNotionConfig" class="settings-grid" use:enhance>
-					<label>
-						Notion secret key
-						<input
-							type="password"
-							name="notionApiKey"
-							placeholder={data.notionConfig.hasApiKey ? 'Saved (leave blank to keep)' : 'secret_xxx'}
-						/>
-					</label>
-					<label>
-						Tasks DB ID
-						<input type="text" name="tasksDbId" value={data.notionConfig.tasksDbId} />
-					</label>
-					<label>
-						Notes DB ID
-						<input type="text" name="notesDbId" value={data.notionConfig.notesDbId} />
-					</label>
-					<label>
-						Task title property
-						<input type="text" name="taskTitleProperty" value={data.notionConfig.taskFieldMap.title} />
-					</label>
-					<label>
-						Task done property
-						<input type="text" name="taskDoneProperty" value={data.notionConfig.taskFieldMap.done} />
-					</label>
-					<label>
-						Task day property
-						<input type="text" name="taskDayProperty" value={data.notionConfig.taskFieldMap.day} />
-					</label>
-					<label>
-						Task carried-over property
-						<input
-							type="text"
-							name="taskCarriedOverProperty"
-							value={data.notionConfig.taskFieldMap.carriedOver}
-						/>
-					</label>
-					<label>
-						Note title property
-						<input type="text" name="noteTitleProperty" value={data.notionConfig.noteFieldMap.title} />
-					</label>
-					<label>
-						Note content property
-						<input type="text" name="noteContentProperty" value={data.notionConfig.noteFieldMap.content} />
-					</label>
-					<label>
-						Note day property
-						<input type="text" name="noteDayProperty" value={data.notionConfig.noteFieldMap.day} />
-					</label>
-					<button class="btn" type="submit">Save Notion settings</button>
-				</form>
+						<fieldset class="notion-group">
+							<legend>Note field mapping</legend>
+							<div class="settings-grid notion-grid-two">
+								<label>
+									Title property
+									<input type="text" name="noteTitleProperty" value={data.notionConfig.noteFieldMap.title} />
+								</label>
+								<label>
+									Content property
+									<input type="text" name="noteContentProperty" value={data.notionConfig.noteFieldMap.content} />
+								</label>
+								<label class="notion-span-full">
+									Day property
+									<input type="text" name="noteDayProperty" value={data.notionConfig.noteFieldMap.day} />
+								</label>
+							</div>
+						</fieldset>
 
-				<form method="post" action="?/syncNotion" use:enhance>
-					<button class="btn btn-primary" type="submit">Sync now</button>
-				</form>
+					</form>
+
+					<form method="post" action="?/syncNotion" use:enhance>
+						<button class="btn btn-primary" type="submit">Sync now</button>
+					</form>
+				{/if}
 			</section>
 		</div>
 	</Modal>
@@ -1109,7 +1195,53 @@
 
 	.modal-settings-layout {
 		display: grid;
+		grid-template-columns: minmax(10rem, 12rem) minmax(0, 1fr);
 		gap: var(--app-space-md);
+		align-items: start;
+	}
+
+	.settings-tabs {
+		display: grid;
+		gap: var(--app-space-xs);
+	}
+
+	.settings-tab {
+		font: inherit;
+		font-weight: 600;
+		text-align: left;
+		padding: var(--app-space-sm) var(--app-space-md);
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		background: var(--app-clr-surface-raised);
+		color: var(--app-clr-on-surface-text-secondary);
+		cursor: pointer;
+		box-shadow: var(--app-shadow-small);
+		transition:
+			box-shadow var(--app-transition-fast),
+			transform var(--app-transition-fast),
+			color var(--app-transition-fast),
+			background-color var(--app-transition-fast);
+	}
+
+	.settings-tab.active {
+		color: var(--app-clr-on-surface-text);
+		background: var(--app-clr-surface-card);
+		box-shadow: var(--app-shadow-interactive-press);
+	}
+
+	.settings-tab:hover:not(.active) {
+		color: var(--app-clr-on-surface-text);
+		box-shadow: var(--app-shadow-interactive-hover);
+		transform: translate(-1px, -1px);
+	}
+
+	.settings-tab:active {
+		box-shadow: var(--app-shadow-interactive-press);
+		transform: translate(1px, 1px);
+	}
+
+	.settings-panel {
+		min-height: 0;
 	}
 
 	.start-day-prompt {
@@ -1439,6 +1571,38 @@
 		grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
 	}
 
+	.notion-settings-form {
+		gap: var(--app-space-md);
+	}
+
+	.notion-group {
+		border: var(--app-border-thick);
+		border-radius: var(--app-radius-md);
+		padding: var(--app-space-sm);
+		display: grid;
+		gap: var(--app-space-sm);
+		background: color-mix(in oklab, var(--app-clr-surface-raised) 55%, transparent);
+	}
+
+	.notion-group legend {
+		padding: 0 var(--app-space-xs);
+		font-weight: 700;
+		color: var(--app-clr-on-surface-text);
+	}
+
+	.notion-help {
+		font-size: var(--app-text-sm);
+		color: var(--app-clr-on-surface-text-muted);
+	}
+
+	.notion-grid-two {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.notion-span-full {
+		grid-column: 1 / -1;
+	}
+
 	.hue-label {
 		grid-column: 1 / -1;
 	}
@@ -1655,6 +1819,14 @@
 
 		.nav-brand {
 			justify-items: center;
+		}
+
+		.modal-settings-layout {
+			grid-template-columns: 1fr;
+		}
+
+		.notion-grid-two {
+			grid-template-columns: 1fr;
 		}
 	}
 
