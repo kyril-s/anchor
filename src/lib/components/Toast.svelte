@@ -72,18 +72,18 @@
 	}
 
 	.toast[data-tone='success'] {
-		background: var(--app-clr-state-success-dim, #dcfce7);
-		color: var(--app-clr-state-success, #15803d);
+		background: var(--color-status-success-subtle);
+		color: var(--color-status-success);
 	}
 
 	.toast[data-tone='warning'] {
-		background: var(--app-clr-state-warning-dim, #ffedd5);
-		color: var(--app-clr-state-warning, #b45309);
+		background: var(--color-status-warning-subtle);
+		color: var(--color-status-warning);
 	}
 
 	.toast[data-tone='error'] {
-		background: var(--app-clr-state-critical-dim, #fee2e2);
-		color: var(--app-clr-state-critical, #b91c1c);
+		background: var(--color-status-critical-subtle);
+		color: var(--color-status-critical);
 	}
 
 	.toast p {

@@ -144,33 +144,35 @@
 		const longH = (h + 80) % 360;
 
 		if (dark) {
-			root.setProperty('--app-clr-surface-page', hsl(h, 30, 6));
-			root.setProperty('--app-clr-surface-card', hsl(h, 30, 12));
-			root.setProperty('--app-clr-surface-raised', hsl(h, 28, 18));
-			root.setProperty('--app-clr-surface-input', hsl(h, 24, 10));
-			root.setProperty('--app-clr-on-surface-text', hsl(h, 12, 92));
-			root.setProperty('--app-clr-on-surface-text-secondary', hsl(h, 12, 63));
-			root.setProperty('--app-clr-on-surface-text-muted', hsl(h, 10, 43));
-			root.setProperty('--app-clr-work', hsl(h, 65, 68));
-			root.setProperty('--app-clr-break', hsl(breakH, 55, 68));
-			root.setProperty('--app-clr-long-break', hsl(longH, 60, 68));
-			root.setProperty('--app-clr-action-primary', '#f0f0f0');
-			root.setProperty('--app-clr-action-primary-text', '#111111');
-			root.setProperty('--app-clr-focus-ring', hsla(h, 60, 70, 0.5));
+			root.setProperty('--color-surface-page', hsl(h, 30, 6));
+			root.setProperty('--color-surface-container', hsl(h, 30, 12));
+			root.setProperty('--color-surface-raised', hsl(h, 28, 18));
+			root.setProperty('--color-surface-input', hsl(h, 24, 10));
+			root.setProperty('--color-on-surface', hsl(h, 12, 92));
+			root.setProperty('--color-on-surface-muted', hsl(h, 12, 63));
+			root.setProperty('--color-on-surface-subtle', hsl(h, 10, 43));
+			root.setProperty('--color-accent-work', hsl(h, 65, 68));
+			root.setProperty('--color-accent-break', hsl(breakH, 55, 68));
+			root.setProperty('--color-accent-long-break', hsl(longH, 60, 68));
+			root.setProperty('--color-action-primary', '#f0f0f0');
+			root.setProperty('--color-on-action-primary', '#111111');
+			root.setProperty('--color-on-accent', '#111111');
+			root.setProperty('--color-focus-ring', hsla(h, 60, 70, 0.5));
 		} else {
-			root.setProperty('--app-clr-surface-page', hsl(h, 8, 93));
-			root.setProperty('--app-clr-surface-card', hsl(h, 8, 96));
-			root.setProperty('--app-clr-surface-raised', hsl(h, 6, 91));
-			root.setProperty('--app-clr-surface-input', hsl(h, 10, 94));
-			root.setProperty('--app-clr-on-surface-text', hsl(h, 20, 14));
-			root.setProperty('--app-clr-on-surface-text-secondary', hsl(h, 14, 43));
-			root.setProperty('--app-clr-on-surface-text-muted', hsl(h, 10, 63));
-			root.setProperty('--app-clr-work', hsl(h, 65, 42));
-			root.setProperty('--app-clr-break', hsl(breakH, 55, 35));
-			root.setProperty('--app-clr-long-break', hsl(longH, 60, 38));
-			root.setProperty('--app-clr-action-primary', '#1a1a1a');
-			root.setProperty('--app-clr-action-primary-text', '#ffffff');
-			root.setProperty('--app-clr-focus-ring', hsla(h, 70, 60, 0.5));
+			root.setProperty('--color-surface-page', hsl(h, 8, 93));
+			root.setProperty('--color-surface-container', hsl(h, 8, 96));
+			root.setProperty('--color-surface-raised', hsl(h, 6, 91));
+			root.setProperty('--color-surface-input', hsl(h, 10, 94));
+			root.setProperty('--color-on-surface', hsl(h, 20, 14));
+			root.setProperty('--color-on-surface-muted', hsl(h, 14, 43));
+			root.setProperty('--color-on-surface-subtle', hsl(h, 10, 63));
+			root.setProperty('--color-accent-work', hsl(h, 65, 42));
+			root.setProperty('--color-accent-break', hsl(breakH, 55, 35));
+			root.setProperty('--color-accent-long-break', hsl(longH, 60, 38));
+			root.setProperty('--color-action-primary', '#1a1a1a');
+			root.setProperty('--color-on-action-primary', '#ffffff');
+			root.setProperty('--color-on-accent', '#ffffff');
+			root.setProperty('--color-focus-ring', hsla(h, 70, 60, 0.5));
 		}
 	}
 
@@ -1848,7 +1850,7 @@ function queueNotionSettingsSave(event: Event) {
 
 	.nav-date {
 		color: var(--app-clr-on-surface-text-muted);
-		font-size: 0.8rem;
+		font-size: var(--text-sm);
 	}
 
 	.nav-tabs {
@@ -1885,7 +1887,7 @@ function queueNotionSettingsSave(event: Event) {
 		padding: var(--app-space-sm) var(--app-space-md);
 		font-size: var(--app-text-sm);
 		font-weight: 700;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--tracking-label);
 		text-transform: uppercase;
 	}
 
@@ -1896,8 +1898,8 @@ function queueNotionSettingsSave(event: Event) {
 	}
 
 	.icon-btn {
-		width: 2.5rem;
-		height: 2.5rem;
+		width: var(--size-icon-button-lg);
+		height: var(--size-icon-button-lg);
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -1912,14 +1914,14 @@ function queueNotionSettingsSave(event: Event) {
 	.tab-btn:hover:not(.active),
 	.icon-btn:hover {
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 		color: var(--app-clr-on-surface-text);
 	}
 
 	.tab-btn:active,
 	.icon-btn:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.my-day-grid {
@@ -2029,7 +2031,7 @@ function queueNotionSettingsSave(event: Event) {
 		font-size: var(--app-text-sm);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--tracking-label);
 	}
 
 	.timers-active-label-none {
@@ -2212,12 +2214,12 @@ function queueNotionSettingsSave(event: Event) {
 	.settings-tab:hover:not(.active) {
 		color: var(--app-clr-on-surface-text);
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 	}
 
 	.settings-tab:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.settings-panel {
@@ -2307,7 +2309,7 @@ function queueNotionSettingsSave(event: Event) {
 		font-size: var(--app-text-sm);
 		color: var(--app-clr-on-surface-text-secondary);
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--tracking-label);
 	}
 
 	p {
@@ -2323,9 +2325,9 @@ function queueNotionSettingsSave(event: Event) {
 
 	.mode-btn {
 		font: inherit;
-		font-size: 0.75rem;
+		font-size: var(--text-xs);
 		font-weight: 700;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--tracking-label);
 		text-transform: uppercase;
 		line-height: 1;
 		border: var(--app-border-thick);
@@ -2343,19 +2345,19 @@ function queueNotionSettingsSave(event: Event) {
 	}
 
 	.mode-btn.active {
-		color: white;
+		color: var(--color-on-accent);
 		box-shadow: var(--app-shadow-interactive-press);
 	}
 
 	.mode-btn:hover:not(.active) {
 		color: var(--app-clr-on-surface-text);
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 	}
 
 	.mode-btn:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	/* Keep primary action controls aligned. */
@@ -2495,9 +2497,9 @@ function queueNotionSettingsSave(event: Event) {
 		width: 1.125rem;
 		height: 1.125rem;
 		border-radius: var(--app-radius-sm);
-		background: #fff;
+		background: var(--color-surface-container);
 		border: var(--app-border-thick);
-		box-shadow: 2px 2px 0 #b0b1c0;
+		box-shadow: var(--elevation-thumb);
 		transition: border-color var(--app-transition-fast), box-shadow var(--app-transition-fast);
 	}
 
@@ -2505,9 +2507,9 @@ function queueNotionSettingsSave(event: Event) {
 		width: 1.125rem;
 		height: 1.125rem;
 		border-radius: var(--app-radius-sm);
-		background: #fff;
+		background: var(--color-surface-container);
 		border: var(--app-border-thick);
-		box-shadow: 2px 2px 0 #b0b1c0;
+		box-shadow: var(--elevation-thumb);
 		transition: border-color var(--app-transition-fast), box-shadow var(--app-transition-fast);
 	}
 
@@ -2549,12 +2551,12 @@ function queueNotionSettingsSave(event: Event) {
 
 	.btn:hover {
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 	}
 
 	.btn:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.btn:disabled {
@@ -2571,7 +2573,7 @@ function queueNotionSettingsSave(event: Event) {
 
 	.btn-personal {
 		background: var(--app-clr-work);
-		color: #ffffff;
+		color: var(--color-on-accent);
 	}
 
 	.btn-full {
@@ -2635,7 +2637,7 @@ function queueNotionSettingsSave(event: Event) {
 
 	.chip {
 		font-family: var(--app-font-mono);
-		font-size: 0.75rem;
+		font-size: var(--text-xs);
 		font-weight: 700;
 		line-height: 1;
 		border: var(--app-border-thick);
@@ -2654,12 +2656,12 @@ function queueNotionSettingsSave(event: Event) {
 
 	.chip:hover {
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 	}
 
 	.chip:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.shortcut-row:first-child .chip:hover {
@@ -2784,12 +2786,12 @@ function queueNotionSettingsSave(event: Event) {
 
 	.task-icon-btn:hover {
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 	}
 
 	.task-icon-btn:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.task-icon-btn-primary {

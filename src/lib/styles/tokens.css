@@ -1,70 +1,152 @@
 :root {
-	/* Core surfaces and text */
-	--app-clr-surface-page: #edeef3;
-	--app-clr-surface-card: #f5f5f8;
-	--app-clr-surface-raised: #eaebed;
-	--app-clr-surface-input: #efeff4;
-	--app-clr-on-surface-text: #1a1b2e;
-	--app-clr-on-surface-text-secondary: #5d5f7e;
-	--app-clr-on-surface-text-muted: #9394b0;
-	--app-clr-work: #b1266b;
-	--app-clr-break: #0d9488;
-	--app-clr-long-break: #9333ea;
-	--app-clr-state-success: #15803d;
-	--app-clr-state-success-dim: #dcfce7;
-	--app-clr-state-warning: #b45309;
-	--app-clr-state-warning-dim: #ffedd5;
-	--app-clr-state-critical: #b91c1c;
-	--app-clr-state-critical-dim: #fee2e2;
+	/* Primitive neutrals */
+	--neutral-0: #ffffff;
+	--neutral-10: #f5f5f8;
+	--neutral-20: #eaebed;
+	--neutral-40: #b0b1c0;
+	--neutral-90: #1a1a1a;
+
+	/* Abstract semantic colors */
+	--color-surface-page: #edeef3;
+	--color-surface-container: var(--neutral-10);
+	--color-surface-raised: var(--neutral-20);
+	--color-surface-input: #efeff4;
+	--color-surface-overlay: hsl(0 0% 0% / 0.45);
+	--color-surface-subtle: color-mix(in oklab, var(--color-surface-raised) 55%, transparent);
+
+	--color-on-surface: #1a1b2e;
+	--color-on-surface-muted: #5d5f7e;
+	--color-on-surface-subtle: #9394b0;
+	--color-border-strong: var(--color-on-surface);
+	--color-focus-ring: rgba(59, 130, 246, 0.5);
+
+	--color-accent-work: #b1266b;
+	--color-accent-break: #0d9488;
+	--color-accent-long-break: #9333ea;
+	--color-on-accent: var(--neutral-0);
+
+	--color-status-success: #15803d;
+	--color-status-success-subtle: #dcfce7;
+	--color-status-warning: #b45309;
+	--color-status-warning-subtle: #ffedd5;
+	--color-status-critical: #b91c1c;
+	--color-status-critical-subtle: #fee2e2;
+
+	--color-action-primary: var(--neutral-90);
+	--color-on-action-primary: var(--neutral-0);
+	--color-action-success: var(--color-status-success);
+	--color-on-action-success: var(--neutral-0);
+	--color-action-critical: var(--color-status-critical);
+	--color-on-action-critical: var(--neutral-0);
+
+	/* Abstract sizing and motion */
+	--space-xs: 0.25rem;
+	--space-sm: 0.5rem;
+	--space-md: 1rem;
+	--space-lg: 1.5rem;
+	--space-xl: 2.5rem;
+
+	--size-nav-md: 3.25rem;
+	--size-control-sm: 1.875rem;
+	--size-control-md: 2.125rem;
+	--size-control-lg: 2.5rem;
+	--size-icon-button-lg: 2.5rem;
+
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--radius-pill: 999px;
+	--border-width-strong: 2px;
+
+	--elevation-1: 3px 3px 0 var(--neutral-40);
+	--elevation-2: 8px 8px 0 var(--neutral-40);
+	--elevation-3: 12px 12px 0 var(--neutral-90);
+	--elevation-hover: 5px 5px 0 var(--neutral-40);
+	--elevation-pressed: 1px 1px 0 var(--neutral-40);
+	--elevation-thumb: 2px 2px 0 var(--neutral-40);
+
+	--motion-duration-fast: 150ms;
+	--motion-duration-base: 250ms;
+	--motion-ease-standard: ease;
+	--motion-hover-translate: translate(-1px, -1px);
+	--motion-pressed-translate: translate(1px, 1px);
+
+	--font-body:
+		system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+		'Open Sans', 'Helvetica Neue', sans-serif;
+	--font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, Monaco, Consolas,
+		monospace;
+	--text-xs: 0.75rem;
+	--text-sm: 0.875rem;
+	--text-md: 1rem;
+	--text-lg: 1.25rem;
+	--text-xl: 1.5rem;
+	--text-timer: clamp(2.25rem, 9vw, 4rem);
+	--tracking-label: 0.04em;
+	--line-height-normal: 1.5;
+	--line-height-tight: 1.1;
+
+	/* Legacy aliases for incremental migration */
+	--app-clr-surface-page: var(--color-surface-page);
+	--app-clr-surface-card: var(--color-surface-container);
+	--app-clr-surface-raised: var(--color-surface-raised);
+	--app-clr-surface-input: var(--color-surface-input);
+	--app-clr-on-surface-text: var(--color-on-surface);
+	--app-clr-on-surface-text-secondary: var(--color-on-surface-muted);
+	--app-clr-on-surface-text-muted: var(--color-on-surface-subtle);
+	--app-clr-work: var(--color-accent-work);
+	--app-clr-break: var(--color-accent-break);
+	--app-clr-long-break: var(--color-accent-long-break);
+	--app-clr-state-success: var(--color-status-success);
+	--app-clr-state-success-dim: var(--color-status-success-subtle);
+	--app-clr-state-warning: var(--color-status-warning);
+	--app-clr-state-warning-dim: var(--color-status-warning-subtle);
+	--app-clr-state-critical: var(--color-status-critical);
+	--app-clr-state-critical-dim: var(--color-status-critical-subtle);
 	--app-clr-success: var(--app-clr-state-success);
 	--app-clr-success-dim: var(--app-clr-state-success-dim);
 	--app-clr-warning: var(--app-clr-state-warning);
 	--app-clr-warning-dim: var(--app-clr-state-warning-dim);
 	--app-clr-error: var(--app-clr-state-critical);
 	--app-clr-error-dim: var(--app-clr-state-critical-dim);
-	--app-clr-action-primary: #1a1a1a;
-	--app-clr-action-primary-text: #ffffff;
-	--app-clr-action-success: var(--app-clr-state-success);
-	--app-clr-action-success-text: #ffffff;
-	--app-clr-action-critical: var(--app-clr-state-critical);
-	--app-clr-action-critical-text: #ffffff;
-	--app-clr-focus-ring: rgba(59, 130, 246, 0.5);
+	--app-clr-action-primary: var(--color-action-primary);
+	--app-clr-action-primary-text: var(--color-on-action-primary);
+	--app-clr-action-success: var(--color-action-success);
+	--app-clr-action-success-text: var(--color-on-action-success);
+	--app-clr-action-critical: var(--color-action-critical);
+	--app-clr-action-critical-text: var(--color-on-action-critical);
+	--app-clr-focus-ring: var(--color-focus-ring);
 
-	/* Borders, radii, and shadows */
-	--app-border-thick: 2px solid var(--app-clr-on-surface-text);
-	--app-radius-sm: 4px;
-	--app-radius-md: 6px;
-	--app-radius-lg: 8px;
-	--app-shadow-small: 3px 3px 0 #b0b1c0;
-	--app-shadow-medium: 8px 8px 0 #b0b1c0;
-	--app-shadow-large: 12px 12px 0 #1a1a1a;
-	--app-shadow-interactive-hover: 5px 5px 0 #b0b1c0;
-	--app-shadow-interactive-press: 1px 1px 0 #b0b1c0;
-	--app-transition-fast: 150ms ease;
-	--app-transition-base: 250ms ease;
-	--app-nav-height: 3.25rem;
-	--app-control-height-base: 2.5rem;
-	--app-control-height-pomodoro-tab: 2.125rem;
-	--app-control-height-chip: 1.875rem;
+	--app-border-thick: var(--border-width-strong) solid var(--color-border-strong);
+	--app-radius-sm: var(--radius-sm);
+	--app-radius-md: var(--radius-md);
+	--app-radius-lg: var(--radius-lg);
+	--app-shadow-small: var(--elevation-1);
+	--app-shadow-medium: var(--elevation-2);
+	--app-shadow-large: var(--elevation-3);
+	--app-shadow-interactive-hover: var(--elevation-hover);
+	--app-shadow-interactive-press: var(--elevation-pressed);
+	--app-transition-fast: var(--motion-duration-fast) var(--motion-ease-standard);
+	--app-transition-base: var(--motion-duration-base) var(--motion-ease-standard);
+	--app-nav-height: var(--size-nav-md);
+	--app-control-height-base: var(--size-control-lg);
+	--app-control-height-pomodoro-tab: var(--size-control-md);
+	--app-control-height-chip: var(--size-control-sm);
 
-	/* Spacing and typography */
-	--app-space-xs: 0.25rem;
-	--app-space-sm: 0.5rem;
-	--app-space-md: 1rem;
-	--app-space-lg: 1.5rem;
-	--app-space-xl: 2.5rem;
-	--app-font-body:
-		system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
-		'Open Sans', 'Helvetica Neue', sans-serif;
-	--app-font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, Monaco, Consolas,
-		monospace;
-	--app-text-sm: 0.875rem;
-	--app-text-base: 1rem;
-	--app-text-lg: 1.25rem;
-	--app-text-xl: 1.5rem;
-	--app-text-timer: clamp(2.25rem, 9vw, 4rem);
-	--app-leading-normal: 1.5;
-	--app-leading-tight: 1.1;
+	--app-space-xs: var(--space-xs);
+	--app-space-sm: var(--space-sm);
+	--app-space-md: var(--space-md);
+	--app-space-lg: var(--space-lg);
+	--app-space-xl: var(--space-xl);
+	--app-font-body: var(--font-body);
+	--app-font-mono: var(--font-mono);
+	--app-text-sm: var(--text-sm);
+	--app-text-base: var(--text-md);
+	--app-text-lg: var(--text-lg);
+	--app-text-xl: var(--text-xl);
+	--app-text-timer: var(--text-timer);
+	--app-leading-normal: var(--line-height-normal);
+	--app-leading-tight: var(--line-height-tight);
 }
 
 *,
@@ -80,10 +162,10 @@ body {
 }
 
 body {
-	font-family: var(--app-font-body);
-	font-size: var(--app-text-base);
-	line-height: var(--app-leading-normal);
-	background: var(--app-clr-surface-page);
-	color: var(--app-clr-on-surface-text);
+	font-family: var(--font-body);
+	font-size: var(--text-md);
+	line-height: var(--line-height-normal);
+	background: var(--color-surface-page);
+	color: var(--color-on-surface);
 	transition: background-color 0.4s ease, color 0.4s ease;
 }

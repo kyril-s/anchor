@@ -115,7 +115,7 @@
 		padding: var(--app-space-sm) var(--app-space-md);
 		font-size: var(--app-text-sm);
 		font-weight: 700;
-		letter-spacing: 0.02em;
+		letter-spacing: var(--tracking-label);
 		border: var(--app-border-thick);
 		border-radius: var(--app-radius-sm);
 		background: var(--app-clr-surface-raised);
@@ -130,7 +130,7 @@
 	}
 
 	.tab-btn.active {
-		color: #ffffff;
+		color: var(--color-on-accent);
 		box-shadow: var(--app-shadow-interactive-press);
 	}
 
@@ -144,13 +144,13 @@
 
 	.tab-btn:hover:not(.active) {
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 		color: var(--app-clr-on-surface-text);
 	}
 
 	.tab-btn:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.flow-section {
@@ -197,12 +197,12 @@
 
 	.btn:hover {
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 	}
 
 	.btn:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.btn-primary {

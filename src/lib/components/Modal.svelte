@@ -61,10 +61,10 @@
 	.modal-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.45);
+		background: var(--color-surface-overlay);
 		display: grid;
 		place-items: center;
-		padding: 1rem;
+		padding: var(--space-md);
 		z-index: 50;
 	}
 
@@ -92,8 +92,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.75rem;
-		padding: 0.9rem 1rem;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
 		border-bottom: var(--app-border-thick);
 	}
 
@@ -119,16 +119,16 @@
 
 	.modal-close:hover {
 		box-shadow: var(--app-shadow-interactive-hover);
-		transform: translate(-1px, -1px);
+		transform: var(--motion-hover-translate);
 	}
 
 	.modal-close:active {
 		box-shadow: var(--app-shadow-interactive-press);
-		transform: translate(1px, 1px);
+		transform: var(--motion-pressed-translate);
 	}
 
 	.modal-body {
-		padding: 1rem;
+		padding: var(--space-md);
 		overflow: auto;
 	}
 

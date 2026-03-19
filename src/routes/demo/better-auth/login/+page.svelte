@@ -22,4 +22,10 @@
 	<button type="submit">Login</button>
 	<button type="submit" formaction="?/signUpEmail">Register</button>
 </form>
-<p style="color: red">{form?.message ?? ''}</p>
+<p class="status-message">{form?.message ?? ''}</p>
+
+<style>
+	.status-message {
+		color: var(--color-status-critical);
+	}
+</style>

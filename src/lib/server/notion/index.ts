@@ -28,6 +28,20 @@ type NotionPageResponse = {
 	id: string;
 };
 
+type NotionDatabaseResponse = {
+	properties: Record<
+		string,
+		{
+			type: string;
+		}
+	>;
+};
+
+type NotionDatabaseSchema = {
+	propertyTypes: Record<string, string>;
+	titlePropertyName: string | null;
+};
+
 type SyncTaskInput = {
 	apiKey: string;
 	databaseId: string;
@@ -66,6 +80,12 @@ function notionText(value: string) {
 	return { rich_text: [{ text: { content: trimTo(value || '') } }] };
 }
 
+function notionDate(value: string) {
+	const day = value?.trim();
+	if (!day) return { date: null };
+	return { date: { start: day } };
+}
+
 function notionCheckbox(value: boolean) {
 	return { checkbox: value };
 }
@@ -80,15 +100,76 @@ function addProperty(
 	properties[key] = value;
 }
 
-async function notionRequest<T>(apiKey: string, path: string, method: string, body: unknown): Promise<T> {
-	const response = await fetch(`https://api.notion.com/v1/${path}`, {
+const DB_SCHEMA_CACHE_TTL_MS = 60_000;
+const dbSchemaCache = new Map<string, { expiresAt: number; schema: NotionDatabaseSchema }>();
+
+function toTextValue(value: string | boolean) {
+	return typeof value === 'string' ? value : value ? 'true' : 'false';
+}
+
+function toDateValue(value: string | boolean) {
+	if (typeof value !== 'string') return '';
+	const trimmed = value.trim();
+	return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : '';
+}
+
+function buildPropertyValueByType(type: string | undefined, value: string | boolean, fallback: 'title' | 'text' | 'checkbox' | 'date') {
+	switch (type) {
+		case 'title':
+			return notionTitle(toTextValue(value));
+		case 'rich_text':
+			return notionText(toTextValue(value));
+		case 'checkbox':
+			return notionCheckbox(Boolean(value));
+		case 'date':
+			return notionDate(toDateValue(value));
+		default:
+			switch (fallback) {
+				case 'title':
+					return notionTitle(toTextValue(value));
+				case 'checkbox':
+					return notionCheckbox(Boolean(value));
+				case 'date':
+					return notionDate(toDateValue(value));
+				case 'text':
+				default:
+					return notionText(toTextValue(value));
+			}
+	}
+}
+
+function buildPropertyTypesMap(database: NotionDatabaseResponse): NotionDatabaseSchema {
+	const propertyTypes: Record<string, string> = {};
+	let titlePropertyName: string | null = null;
+
+	for (const [name, property] of Object.entries(database.properties ?? {})) {
+		propertyTypes[name] = property.type;
+		if (!titlePropertyName && property.type === 'title') titlePropertyName = name;
+	}
+
+	return { propertyTypes, titlePropertyName };
+}
+
+async function notionRequest<T>(
+	apiKey: string,
+	path: string,
+	method: string,
+	body?: unknown
+): Promise<T> {
+	const requestInit: RequestInit = {
 		method,
 		headers: {
 			Authorization: `Bearer ${apiKey}`,
 			'Notion-Version': '2022-06-28',
 			'Content-Type': 'application/json'
-		},
-		body: JSON.stringify(body)
+		}
+	};
+	if (body !== undefined) {
+		requestInit.body = JSON.stringify(body);
+	}
+
+	const response = await fetch(`https://api.notion.com/v1/${path}`, {
+		...requestInit
 	});
 
 	if (!response.ok) {
@@ -97,6 +178,35 @@ async function notionRequest<T>(apiKey: string, path: string, method: string, bo
 	}
 
 	return (await response.json()) as T;
+}
+
+async function getDatabaseSchema(apiKey: string, databaseId: string): Promise<NotionDatabaseSchema> {
+	const cacheKey = `${apiKey}:${databaseId}`;
+	const cached = dbSchemaCache.get(cacheKey);
+	const now = Date.now();
+	if (cached && cached.expiresAt > now) return cached.schema;
+
+	const database = await notionRequest<NotionDatabaseResponse>(
+		apiKey,
+		`databases/${databaseId}`,
+		'GET'
+	);
+	const schema = buildPropertyTypesMap(database);
+	dbSchemaCache.set(cacheKey, { schema, expiresAt: now + DB_SCHEMA_CACHE_TTL_MS });
+	return schema;
+}
+
+function addMappedProperty(
+	properties: Record<string, unknown>,
+	propertyName: string | undefined,
+	value: string | boolean,
+	fallback: 'title' | 'text' | 'checkbox' | 'date',
+	schema: NotionDatabaseSchema
+) {
+	const key = propertyName?.trim();
+	if (!key) return;
+	const mappedType = schema.propertyTypes[key];
+	properties[key] = buildPropertyValueByType(mappedType, value, fallback);
 }
 
 export function normalizeTaskFieldMap(input: Record<string, unknown> | null | undefined): TaskFieldMap {
@@ -121,11 +231,15 @@ export function normalizeNoteFieldMap(input: Record<string, unknown> | null | un
 }
 
 export async function syncDailyTaskToNotion(input: SyncTaskInput): Promise<string> {
+	const schema = await getDatabaseSchema(input.apiKey, input.databaseId);
 	const properties: Record<string, unknown> = {};
-	addProperty(properties, input.fieldMap.title, notionTitle(input.task.title));
-	addProperty(properties, input.fieldMap.done, notionCheckbox(input.task.done));
-	addProperty(properties, input.fieldMap.day, notionText(input.task.day));
-	addProperty(properties, input.fieldMap.carriedOver, notionCheckbox(input.task.carriedOver));
+	addMappedProperty(properties, input.fieldMap.title, input.task.title, 'title', schema);
+	addMappedProperty(properties, input.fieldMap.done, input.task.done, 'checkbox', schema);
+	addMappedProperty(properties, input.fieldMap.day, input.task.day, 'date', schema);
+	addMappedProperty(properties, input.fieldMap.carriedOver, input.task.carriedOver, 'checkbox', schema);
+	if (schema.titlePropertyName && !(schema.titlePropertyName in properties)) {
+		addProperty(properties, schema.titlePropertyName, notionTitle(input.task.title));
+	}
 
 	if (input.task.notionPageId) {
 		const result = await notionRequest<NotionPageResponse>(input.apiKey, `pages/${input.task.notionPageId}`, 'PATCH', {
@@ -142,11 +256,15 @@ export async function syncDailyTaskToNotion(input: SyncTaskInput): Promise<strin
 }
 
 export async function syncDailyNoteToNotion(input: SyncNoteInput): Promise<string> {
+	const schema = await getDatabaseSchema(input.apiKey, input.databaseId);
 	const properties: Record<string, unknown> = {};
 	const titleValue = input.note.day;
-	addProperty(properties, input.fieldMap.title, notionTitle(titleValue));
-	addProperty(properties, input.fieldMap.day, notionText(input.note.day));
-	addProperty(properties, input.fieldMap.content, notionText(input.note.content));
+	addMappedProperty(properties, input.fieldMap.title, titleValue, 'title', schema);
+	addMappedProperty(properties, input.fieldMap.day, input.note.day, 'date', schema);
+	addMappedProperty(properties, input.fieldMap.content, input.note.content, 'text', schema);
+	if (schema.titlePropertyName && !(schema.titlePropertyName in properties)) {
+		addProperty(properties, schema.titlePropertyName, notionTitle(titleValue));
+	}
 
 	if (input.note.notionPageId) {
 		const result = await notionRequest<NotionPageResponse>(input.apiKey, `pages/${input.note.notionPageId}`, 'PATCH', {
